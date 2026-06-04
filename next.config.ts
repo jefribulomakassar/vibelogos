@@ -7,6 +7,10 @@ const nextConfig: NextConfig = {
         hostname: 'res.cloudinary.com',
         pathname: '/doxxsrxcb/**',
       },
+      {
+        protocol: 'https',
+        hostname: 'image.pollinations.ai',
+      },
     ],
   },
 };
