@@ -256,7 +256,10 @@ export default function AdminPage() {
 
   const fetchLogos = useCallback(async () => {
     setLoading(true);
-    const res = await fetch('/api/logos-data');
+    const res = await fetch('/api/logos-data', {
+      headers: { 'x-admin-token': tokenRef.current },
+      cache: 'no-store', // ← tambah ini
+    });
     const data = await res.json();
     setLogos(data.logos || []);
     setLoading(false);
@@ -335,7 +338,7 @@ export default function AdminPage() {
       );
       if (!res.ok) throw new Error(await res.text());
       showToast(editId ? '✓ Logo diupdate!' : '✓ Logo ditambahkan!');
-      setShowForm(false); fetchLogos();
+      setShowForm(false); await fetchLogos();
     } catch (e: unknown) {
       alert('Error: ' + (e instanceof Error ? e.message : String(e)));
     } finally { setSaving(false); }
