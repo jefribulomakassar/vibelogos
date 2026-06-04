@@ -108,7 +108,6 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
   const [step, setStep] = useState('');
   const [error, setError] = useState('');
 
-  // Sync from parent mockups on edit
   useEffect(() => {
     if (mockups.length > 0 && results.length === 0) {
       setResults(mockups.map((url, i) => ({ scene: `scene_${i}`, label: `Mockup ${i + 1}`, url })));
@@ -155,7 +154,6 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
         <span style={{ fontSize: 11, color: '#555' }}>Powered by Claude AI + Pollinations</span>
       </div>
 
-      {/* Generate button */}
       <button
         onClick={generate}
         disabled={generating || !logoUrl}
@@ -195,7 +193,6 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
         </div>
       )}
 
-      {/* Mockup Results Grid */}
       {results.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
           {results.map((r, i) => (
@@ -234,10 +231,13 @@ const emptyForm = () => ({
   logoground_url: '', account: '',
 });
 
+const STORAGE_KEY = 'vl_admin_token';
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function AdminPage() {
   const [token, setToken] = useState('');
   const [authed, setAuthed] = useState(false);
+  const [checking, setChecking] = useState(true); // prevent flash of login screen
   const [logos, setLogos] = useState<Logo[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -248,7 +248,11 @@ export default function AdminPage() {
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000); };
-  const headers = { 'Content-Type': 'application/json', 'x-admin-token': token };
+
+  // headers always uses latest token via closure — use ref pattern
+  const tokenRef = useRef(token);
+  useEffect(() => { tokenRef.current = token; }, [token]);
+  const getHeaders = () => ({ 'Content-Type': 'application/json', 'x-admin-token': tokenRef.current });
 
   const fetchLogos = useCallback(async () => {
     setLoading(true);
@@ -258,10 +262,43 @@ export default function AdminPage() {
     setLoading(false);
   }, []);
 
+  // ── Auto-login from localStorage ─────────────────────────────────────────
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) { setChecking(false); return; }
+    fetch('/api/logos-data', { headers: { 'x-admin-token': saved } })
+      .then(res => {
+        if (res.ok) {
+          setToken(saved);
+          tokenRef.current = saved;
+          setAuthed(true);
+          fetchLogos();
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      })
+      .catch(() => localStorage.removeItem(STORAGE_KEY))
+      .finally(() => setChecking(false));
+  }, [fetchLogos]);
+
   const handleLogin = async () => {
     const res = await fetch('/api/logos-data', { headers: { 'x-admin-token': token } });
-    if (res.ok) { setAuthed(true); fetchLogos(); }
-    else alert('Token salah!');
+    if (res.ok) {
+      localStorage.setItem(STORAGE_KEY, token);
+      setAuthed(true);
+      fetchLogos();
+    } else {
+      alert('Token salah!');
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    setAuthed(false);
+    setToken('');
+    setLogos([]);
+    setShowForm(false);
+    setDeleteId(null);
   };
 
   const openAdd = () => { setEditId(null); setForm(emptyForm()); setShowForm(true); };
@@ -294,7 +331,7 @@ export default function AdminPage() {
       };
       const res = await fetch(
         editId ? `/api/logos-data/${editId}` : '/api/logos-data',
-        { method: editId ? 'PUT' : 'POST', headers, body: JSON.stringify(payload) }
+        { method: editId ? 'PUT' : 'POST', headers: getHeaders(), body: JSON.stringify(payload) }
       );
       if (!res.ok) throw new Error(await res.text());
       showToast(editId ? '✓ Logo diupdate!' : '✓ Logo ditambahkan!');
@@ -305,13 +342,21 @@ export default function AdminPage() {
   };
 
   const handleDelete = async (id: number) => {
-    const res = await fetch(`/api/logos-data/${id}`, { method: 'DELETE', headers });
+    const res = await fetch(`/api/logos-data/${id}`, { method: 'DELETE', headers: getHeaders() });
     if (res.ok) { showToast('🗑 Logo dihapus'); fetchLogos(); }
     setDeleteId(null);
   };
 
   const f = (field: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm(prev => ({ ...prev, [field]: e.target.value }));
+
+  // ── Checking saved session ────────────────────────────────────────────────
+  if (checking) return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
+      <span style={{ display: 'inline-block', width: 32, height: 32, border: '3px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
 
   // ── Login ─────────────────────────────────────────────────────────────────
   if (!authed) return (
@@ -349,6 +394,12 @@ export default function AdminPage() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: 13, color: 'var(--muted)' }}>{logos.length} logos</span>
+          <button
+            onClick={handleLogout}
+            style={{ padding: '6px 14px', fontSize: 12, background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--muted)', cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}
+          >
+            Logout
+          </button>
           <button onClick={openAdd} className="btn-primary"><span style={{ fontSize: 16 }}>+</span> Add Logo</button>
         </div>
       </div>
