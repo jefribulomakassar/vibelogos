@@ -197,7 +197,7 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
           {results.map((r, i) => (
             <div key={i} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--bg3)', aspectRatio: '1' }}>
-              <Image src={r.url} alt={r.label} fill sizes="200px" style={{ objectFit: 'cover' }} />
+              <Image src={r.url} alt={r.label} fill sizes="200px" unoptimized style={{ objectFit: 'cover' }} />
               <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '8px 10px', background: 'linear-gradient(transparent, rgba(0,0,0,0.8))', fontSize: 11, fontWeight: 600, fontFamily: 'Syne, sans-serif' }}>
                 {r.label}
               </div>
