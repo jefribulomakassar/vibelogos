@@ -1,10 +1,13 @@
 import type { NextConfig } from "next";
-
 const nextConfig: NextConfig = {
   images: {
-    remotePatterns: [],
-    // Allow internal API proxy images (same origin)
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'res.cloudinary.com',
+        pathname: '/doxxsrxcb/**',
+      },
+    ],
   },
 };
-
 export default nextConfig;
