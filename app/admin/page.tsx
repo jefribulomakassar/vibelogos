@@ -120,7 +120,7 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
     setGenerating(true);
     setError('');
     setResults([]);
-    setStep('🤖 Claude AI sedang menganalisis logo…');
+    setStep('🤖 Gemini Flash sedang menganalisis logo…');
     try {
       const res = await fetch('/api/generate-mockups', {
         method: 'POST',
@@ -151,7 +151,7 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <label style={labelStyle}>Mockup Images</label>
-        <span style={{ fontSize: 11, color: '#555' }}>Powered by Claude AI + Pollinations</span>
+        <span style={{ fontSize: 11, color: '#555' }}>Powered by Gemini Flash + Pollinations</span>
       </div>
 
       <button
