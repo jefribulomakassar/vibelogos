@@ -96,7 +96,7 @@ function parseHTML(html: string, logogroundUrl: string): LogoGroundData {
     }
   }
 
-  return { title, description, keywords, price, main_category, secondary_categories, logo_url, logoground_url };
+  return { title, description, keywords, price, main_category, secondary_categories, logo_url, logoground_url: logogroundUrl };
 }
 
 export async function GET(req: NextRequest) {
