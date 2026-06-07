@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 
-// Vercel: perpanjang timeout route ini hingga 60 detik (free plan max)
-// Upgrade ke Vercel Pro → ganti jadi 300
-export const maxDuration = 300; // Vercel Pro: 300s, Free: max 60s (upgrade recommended)
+export const maxDuration = 300;
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 function checkAdmin(req: NextRequest) {
@@ -17,17 +15,18 @@ interface MockupResult {
   url: string;
 }
 
-// ─── Gemini Image Models (hanya yang support image output) ──────────────────────
-// gemini-2.5-flash & lite TIDAK support image output (text only) — jangan dipakai
-// Rate limit free tier: 15 req/menit per key → pakai multi-key rotation
+// ─── Model yang BENAR untuk image generation + image input ───────────────────
+// gemini-2.0-flash-exp-image-generation = satu-satunya model Gemini yang:
+//   1. Menerima IMAGE sebagai input (logo kamu)
+//   2. Menghasilkan IMAGE sebagai output (mockup)
+// Endpoint: generateContent (sama seperti biasa, bukan /predict)
+// JANGAN pakai: imagen-3.0 (tidak support image input)
+// JANGAN pakai: gemini-2.5-flash/lite (tidak support image output)
 const GEMINI_IMAGE_MODELS = [
-  'gemini-3.1-flash-image',         // primary — Nano Banana 2
-  'gemini-3.1-flash-image-preview', // fallback
+  'gemini-2.0-flash-exp-image-generation', // primary — satu-satunya yang support i2i
 ];
 
 // ─── Multi API Key Rotation ───────────────────────────────────────────────────
-// Set di Vercel env: GEMINI_API_KEY (wajib), GEMINI_API_KEY_2, GEMINI_API_KEY_3, dst
-// Makin banyak key → makin kecil kemungkinan 429
 function getApiKeys(): string[] {
   const keys: string[] = [];
   if (process.env.GEMINI_API_KEY)   keys.push(process.env.GEMINI_API_KEY);
@@ -37,55 +36,74 @@ function getApiKeys(): string[] {
   return keys;
 }
 
+// ─── Error classification ─────────────────────────────────────────────────────
+function classifyError(msg: string): 'rate_limit' | 'not_retryable' | 'retryable' {
+  if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
+    return 'rate_limit';
+  }
+  // 400 / 404 / model not found → tidak ada gunanya retry ke model/key lain
+  if (
+    msg.includes('400') ||
+    msg.includes('404') ||
+    msg.includes('not found') ||
+    msg.includes('invalid') ||
+    msg.includes('API_KEY_INVALID') ||
+    msg.includes('INVALID_ARGUMENT')
+  ) {
+    return 'not_retryable';
+  }
+  return 'retryable';
+}
+
 // ─── 6 Scene Definitions ──────────────────────────────────────────────────────
 const SCENES = [
   {
     scene: 'tshirt',
     label: '👕 T-Shirt',
     buildPrompt: (title: string, desc: string, cat: string) =>
-      `You are given the logo image of "${title}", a ${cat} brand. ${desc ? `Brand description: ${desc}.` : ''}
+      `You are given the logo image of "${title}", a ${cat} brand.${desc ? ` Brand description: ${desc}.` : ''}
 
-Generate a photorealistic product mockup showing this EXACT logo (reproduce the logo faithfully — same colors, shapes, typography) printed centered on the chest of a clean white t-shirt. The t-shirt should be displayed as a flat lay on a smooth light surface. Studio lighting, minimal white/grey background, commercial photography quality, 4K resolution. The logo must be clearly visible and accurate.`,
+Using this exact logo (reproduce faithfully — same colors, shapes, typography), generate a photorealistic product mockup showing the logo printed centered on the chest of a clean white t-shirt. Flat lay on a smooth light surface. Studio lighting, minimal white/grey background, commercial photography quality, 4K resolution. The logo must be clearly visible and accurate.`,
   },
   {
     scene: 'business_card',
     label: '💳 Business Card',
     buildPrompt: (title: string, desc: string, cat: string) =>
-      `You are given the logo image of "${title}", a ${cat} brand. ${desc ? `Brand description: ${desc}.` : ''}
+      `You are given the logo image of "${title}", a ${cat} brand.${desc ? ` Brand description: ${desc}.` : ''}
 
-Generate a photorealistic business card mockup showing this EXACT logo (reproduce faithfully — same colors, shapes, typography) prominently on the front of a premium matte white business card. The card should rest on a marble or dark textured surface, slight shadow, elegant top-down angle. Studio photography quality. The logo must be clearly visible and accurate.`,
+Using this exact logo (reproduce faithfully — same colors, shapes, typography), generate a photorealistic business card mockup with the logo prominently on the front of a premium matte white card. Resting on a marble or dark textured surface, slight shadow, elegant top-down angle. Studio photography quality.`,
   },
   {
     scene: 'mug',
     label: '☕ Mug',
     buildPrompt: (title: string, desc: string, cat: string) =>
-      `You are given the logo image of "${title}", a ${cat} brand. ${desc ? `Brand description: ${desc}.` : ''}
+      `You are given the logo image of "${title}", a ${cat} brand.${desc ? ` Brand description: ${desc}.` : ''}
 
-Generate a photorealistic product mockup showing this EXACT logo (reproduce faithfully — same colors, shapes, typography) printed on the side of a clean white ceramic coffee mug. Place the mug on a wooden table or minimal surface, warm cafe-like lighting, professional photography. The logo must be clearly visible, accurate, and centered on the mug.`,
+Using this exact logo (reproduce faithfully — same colors, shapes, typography), generate a photorealistic mockup of the logo printed on the side of a clean white ceramic coffee mug. Wooden table or minimal surface, warm cafe-like lighting, professional photography. Logo clearly visible and centered.`,
   },
   {
     scene: 'tote_bag',
     label: '🛍️ Tote Bag',
     buildPrompt: (title: string, desc: string, cat: string) =>
-      `You are given the logo image of "${title}", a ${cat} brand. ${desc ? `Brand description: ${desc}.` : ''}
+      `You are given the logo image of "${title}", a ${cat} brand.${desc ? ` Brand description: ${desc}.` : ''}
 
-Generate a photorealistic product mockup showing this EXACT logo (reproduce faithfully — same colors, shapes, typography) screen-printed on the front of a natural canvas tote bag. The bag should hang or be displayed upright on a clean white or light background. Lifestyle photography quality, soft studio lighting. The logo must be clearly visible and accurate.`,
+Using this exact logo (reproduce faithfully — same colors, shapes, typography), generate a photorealistic mockup of the logo screen-printed on a natural canvas tote bag. Displayed upright on a clean white or light background. Lifestyle photography quality, soft studio lighting.`,
   },
   {
     scene: 'poster',
     label: '🖼️ Poster',
     buildPrompt: (title: string, desc: string, cat: string) =>
-      `You are given the logo image of "${title}", a ${cat} brand. ${desc ? `Brand description: ${desc}.` : ''}
+      `You are given the logo image of "${title}", a ${cat} brand.${desc ? ` Brand description: ${desc}.` : ''}
 
-Generate a photorealistic brand mockup showing this EXACT logo (reproduce faithfully — same colors, shapes, typography) featured large and prominently on an A2 poster mounted on a clean white interior wall. Contemporary gallery or office setting, minimal design, professional interior photography. The logo must dominate the poster and be clearly accurate.`,
+Using this exact logo (reproduce faithfully — same colors, shapes, typography), generate a photorealistic brand mockup with the logo on an A2 poster mounted on a clean white interior wall. Contemporary gallery or office setting, minimal design, professional interior photography.`,
   },
   {
     scene: 'billboard',
     label: '🏙️ Billboard',
     buildPrompt: (title: string, desc: string, cat: string) =>
-      `You are given the logo image of "${title}", a ${cat} brand. ${desc ? `Brand description: ${desc}.` : ''}
+      `You are given the logo image of "${title}", a ${cat} brand.${desc ? ` Brand description: ${desc}.` : ''}
 
-Generate a photorealistic outdoor advertising mockup showing this EXACT logo (reproduce faithfully — same colors, shapes, typography) displayed large on a billboard in an urban street scene. Daytime, natural lighting, realistic city background. Wide-angle commercial visualization, high quality render. The logo must be clearly visible, dominant, and accurate.`,
+Using this exact logo (reproduce faithfully — same colors, shapes, typography), generate a photorealistic outdoor advertising mockup of the logo on a billboard in an urban street scene. Daytime, natural lighting, realistic city background. Wide-angle commercial visualization.`,
   },
 ];
 
@@ -101,6 +119,8 @@ async function fetchLogoAsBase64(logoUrl: string): Promise<{ base64: string; mim
 }
 
 // ─── Call Gemini Image Generation API ────────────────────────────────────────
+// Model: gemini-2.0-flash-exp-image-generation
+// Endpoint: generateContent (standard) — BUKAN /predict seperti Imagen
 async function callGemini(
   model: string,
   prompt: string,
@@ -114,12 +134,14 @@ async function callGemini(
     contents: [
       {
         parts: [
+          // Image input dulu, lalu text prompt
           { inline_data: { mime_type: logoMime, data: logoBase64 } },
           { text: prompt },
         ],
       },
     ],
     generationConfig: {
+      // IMAGE + TEXT wajib keduanya, model butuh ini untuk aktifkan image output
       responseModalities: ['IMAGE', 'TEXT'],
     },
   };
@@ -128,23 +150,33 @@ async function callGemini(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(45_000),
+    signal: AbortSignal.timeout(50_000),
   });
 
+  // Baca body sekali, simpan ke variable
+  const responseText = await res.text();
+
   if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Gemini ${model} error ${res.status}: ${errText.slice(0, 300)}`);
+    throw new Error(`Gemini ${model} error ${res.status}: ${responseText.slice(0, 400)}`);
   }
 
-  const data = await res.json();
-  const parts = data?.candidates?.[0]?.content?.parts ?? [];
+  let data: unknown;
+  try {
+    data = JSON.parse(responseText);
+  } catch {
+    throw new Error(`Gemini ${model} returned non-JSON: ${responseText.slice(0, 200)}`);
+  }
+
+  const parts = (data as { candidates?: Array<{ content?: { parts?: Array<{ inline_data?: { data?: string } }> } }> })
+    ?.candidates?.[0]?.content?.parts ?? [];
+
   for (const part of parts) {
     if (part.inline_data?.data) {
       return Buffer.from(part.inline_data.data, 'base64');
     }
   }
 
-  throw new Error(`Gemini ${model} returned no image. Response: ${JSON.stringify(data).slice(0, 200)}`);
+  throw new Error(`Gemini ${model} returned no image. Response: ${JSON.stringify(data).slice(0, 300)}`);
 }
 
 // ─── Upload Buffer → Cloudinary ───────────────────────────────────────────────
@@ -179,9 +211,7 @@ async function uploadBufferToCloudinary(buffer: Buffer): Promise<string> {
   return result.secure_url as string;
 }
 
-// ─── Generate 1 scene dengan assigned key + model fallback ───────────────────
-// assignedKey = key yang dialokasikan untuk scene ini (round-robin dari POST)
-// Kalau assignedKey 429 → fallback ke key lain → fallback model lain
+// ─── Generate 1 scene dengan key rotation + error classification ──────────────
 async function generateScene(
   sceneConfig: (typeof SCENES)[0],
   title: string,
@@ -190,12 +220,12 @@ async function generateScene(
   logoBase64: string,
   logoMime: string,
   apiKeys: string[],
-  assignedKeyIndex: number, // index key utama untuk scene ini
+  assignedKeyIndex: number,
 ): Promise<MockupResult> {
   const prompt = sceneConfig.buildPrompt(title, description, category);
   const errors: string[] = [];
 
-  // Susun urutan key: mulai dari assignedKey, lalu key lain sebagai fallback
+  // Urutan key: mulai dari assignedKey, lalu fallback ke key lain
   const keyOrder = [
     assignedKeyIndex,
     ...apiKeys.map((_, i) => i).filter(i => i !== assignedKeyIndex),
@@ -214,11 +244,23 @@ async function generateScene(
         return { scene: sceneConfig.scene, label: sceneConfig.label, url: cloudUrl };
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        const is429 = msg.includes('429');
-        console.warn(`[mockup] ${keyLabel}+${model} failed (${is429 ? 'RATE LIMIT' : 'ERROR'}): ${msg.slice(0, 120)}`);
-        errors.push(`${keyLabel}+${model}: ${msg.slice(0, 80)}`);
-        // Kalau 429, langsung skip ke key berikutnya (jangan retry model lain di key yang sama)
-        if (is429) break;
+        const errorType = classifyError(msg);
+
+        console.warn(`[mockup] ${keyLabel}+${model} failed [${errorType.toUpperCase()}]: ${msg.slice(0, 150)}`);
+        errors.push(`${keyLabel}+${model}[${errorType}]: ${msg.slice(0, 80)}`);
+
+        if (errorType === 'rate_limit') {
+          // Key ini kena rate limit → skip semua model di key ini, coba key berikutnya
+          console.warn(`[mockup] ${keyLabel} rate limited, switching key…`);
+          break;
+        }
+
+        if (errorType === 'not_retryable') {
+          // 400/404/invalid → tidak ada gunanya retry model/key lain, langsung throw
+          throw new Error(`Non-retryable error on scene "${sceneConfig.scene}": ${msg}`);
+        }
+
+        // retryable → coba model berikutnya di key yang sama (kalau ada)
       }
     }
   }
@@ -258,15 +300,12 @@ export async function POST(req: NextRequest) {
     const { base64: logoBase64, mimeType: logoMime } = await fetchLogoAsBase64(logo_url);
     console.log(`[mockup] logo fetched, mime=${logoMime}, size=${logoBase64.length} chars`);
 
-    // Sequential + round-robin key assignment:
-    // scene[0]→key[0], scene[1]→key[1], scene[2]→key[2], scene[3]→key[0], dst
-    // Tiap key dapat jeda alami ~N×10s sebelum dipanggil lagi → hindari 429
-    // Kalau key yang ditugaskan 429 → otomatis fallback ke key lain
     const results: MockupResult[] = [];
 
     for (let i = 0; i < SCENES.length; i++) {
       const scene = SCENES[i];
-      const assignedKeyIndex = i % apiKeys.length; // round-robin
+      // Round-robin: scene[0]→key[0], scene[1]→key[1], dst
+      const assignedKeyIndex = i % apiKeys.length;
       console.log(`[mockup] scene ${i + 1}/${SCENES.length} (${scene.scene}) → key_${assignedKeyIndex + 1}`);
 
       try {
@@ -276,23 +315,27 @@ export async function POST(req: NextRequest) {
         results.push(result);
         console.log(`[mockup] ✓ ${i + 1}/${SCENES.length} done`);
       } catch (e) {
-        console.error(`[mockup] scene skipped (${scene.scene}):`, e);
+        // Non-retryable error → skip scene ini, lanjut ke scene berikutnya
+        console.error(`[mockup] scene skipped (${scene.scene}):`, e instanceof Error ? e.message : e);
       }
 
-      // Jeda 4s antar scene — safety net agar tidak flood 15 RPM free tier
+      // Delay 10s antar scene — aman untuk free tier 15 RPM
+      // Free tier: 15 req/menit = 1 req per 4s minimum, 10s = safety margin 2.5×
       if (i < SCENES.length - 1) {
-        await new Promise(r => setTimeout(r, 4_000));
+        console.log(`[mockup] waiting 10s before next scene…`);
+        await new Promise(r => setTimeout(r, 10_000));
       }
     }
 
     if (results.length === 0) {
       return NextResponse.json(
-        { error: 'Semua scene gagal. Periksa GEMINI_API_KEY atau coba lagi.' },
+        { error: 'Semua scene gagal. Periksa GEMINI_API_KEY atau coba lagi nanti.' },
         { status: 502 },
       );
     }
 
     return NextResponse.json({ mockups: results, total: results.length });
+
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error('[mockup] fatal error:', msg);
