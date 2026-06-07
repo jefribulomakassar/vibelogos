@@ -121,13 +121,17 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const res = await fetch(
-      `https://app.scrapingbee.com/api/v1/?api_key=${process.env.SCRAPINGBEE_API_KEY}&url=${encodeURIComponent(`https://www.logoground.com/logo.php?id=${logoId}`)}&render_js=true`,
-      {
-        signal: AbortSignal.timeout(25_000),
-        cache: 'no-store',
-      }
-    );
+    const res = await fetch(`https://www.logoground.com/logo.php?id=${logoId}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+      // @ts-ignore
+      agent: new (await import('https-proxy-agent')).HttpsProxyAgent(
+        `http://${process.env.BRIGHTDATA_USER}:${process.env.BRIGHTDATA_PASS}@brd.superproxy.io:22225`
+      ),
+      signal: AbortSignal.timeout(25_000),
+      cache: 'no-store',
+    });
 
     if (!res.ok) {
       return NextResponse.json(
