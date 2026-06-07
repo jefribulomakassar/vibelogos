@@ -28,6 +28,11 @@ const GEMINI_IMAGE_MODELS = [
 ];
 
 // ─── Multi API Key Rotation ───────────────────────────────────────────────────
+// ⚠️  PENTING: Gemini rate limit berjalan di level PROJECT, bukan per API key.
+//     Key dari project yang sama = berbagi quota yang sama = rotasi key tidak membantu
+//     untuk rate limit. Rotasi key hanya berguna jika key dari PROJECT BERBEDA.
+//     Free tier image generation: 2 IPM (images per minute) per project.
+//     → Solusi: delay 35s antar scene (safety margin dari 30s/image minimum).
 function getApiKeys(): string[] {
   const keys: string[] = [];
   if (process.env.GEMINI_API_KEY)   keys.push(process.env.GEMINI_API_KEY);
@@ -320,17 +325,19 @@ export async function POST(req: NextRequest) {
         console.error(`[mockup] scene skipped (${scene.scene}):`, e instanceof Error ? e.message : e);
       }
 
-      // Delay 10s antar scene — aman untuk free tier 15 RPM
-      // Free tier: 15 req/menit = 1 req per 4s minimum, 10s = safety margin 2.5×
+      // Delay 35s antar scene — wajib untuk free tier image generation
+      // Free tier IPM limit: 2 images/menit = 1 image per 30s minimum
+      // 35s = safety margin ~17% di atas limit → hindari 429
+      // ⚠️ Rotasi API key TIDAK membantu jika key dari project yang sama (shared quota)
       if (i < SCENES.length - 1) {
-        console.log(`[mockup] waiting 10s before next scene…`);
-        await new Promise(r => setTimeout(r, 10_000));
+        console.log(`[mockup] waiting 35s before next scene (free tier IPM limit)…`);
+        await new Promise(r => setTimeout(r, 35_000));
       }
     }
 
     if (results.length === 0) {
       return NextResponse.json(
-        { error: 'Semua scene gagal. Periksa GEMINI_API_KEY atau coba lagi nanti.' },
+        { error: 'Rate limit tercapai. Free tier Gemini hanya 2 images/menit per project. Coba lagi dalam 2–3 menit, atau gunakan API key dari Google Cloud project yang berbeda.' },
         { status: 502 },
       );
     }
