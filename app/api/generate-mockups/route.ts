@@ -15,24 +15,21 @@ interface MockupResult {
   url: string;
 }
 
-// ─── Model untuk image generation + image input ──────────────────────────────
-// gemini-2.5-flash-image        = GA sejak Okt 2025 (nano-banana), RECOMMENDED
-// gemini-2.5-flash-image-preview = alias preview (fallback kalau GA down)
-// gemini-2.0-flash-preview-image-generation = fallback lama (masih aktif per mid-2025)
-// JANGAN pakai: imagen-3.0 (tidak support image input)
-// JANGAN pakai: gemini-2.5-flash / gemini-2.0-flash-exp-image-generation (sudah 404)
+// ─── Model ───────────────────────────────────────────────────────────────────
+// gemini-2.5-flash-image = GA (Okt 2025, "nano-banana"), support image-in + image-out
+// gemini-2.5-flash-image-preview = fallback alias
+// gemini-2.0-flash-preview-image-generation = fallback lama
+// JANGAN pakai: gemini-2.0-flash-exp-image-generation (sudah 404)
 const GEMINI_IMAGE_MODELS = [
-  'gemini-2.5-flash-image',                    // primary — GA, nano-banana
-  'gemini-2.5-flash-image-preview',             // fallback 1 — preview alias
-  'gemini-2.0-flash-preview-image-generation',  // fallback 2 — versi lama yg masih jalan
+  'gemini-2.5-flash-image',
+  'gemini-2.5-flash-image-preview',
+  'gemini-2.0-flash-preview-image-generation',
 ];
 
-// ─── Multi API Key Rotation ───────────────────────────────────────────────────
-// ⚠️  PENTING: Gemini rate limit berjalan di level PROJECT, bukan per API key.
-//     Key dari project yang sama = berbagi quota yang sama = rotasi key tidak membantu
-//     untuk rate limit. Rotasi key hanya berguna jika key dari PROJECT BERBEDA.
-//     Free tier image generation: 2 IPM (images per minute) per project.
-//     → Solusi: delay 35s antar scene (safety margin dari 30s/image minimum).
+// ─── Multi API Key ────────────────────────────────────────────────────────────
+// ⚠️  Rate limit Gemini berjalan di level PROJECT, bukan per key.
+//     Key dari project yang SAMA = berbagi quota = rotasi tidak membantu untuk 429.
+//     Rotasi hanya efektif jika key berasal dari Google Cloud PROJECT BERBEDA.
 function getApiKeys(): string[] {
   const keys: string[] = [];
   if (process.env.GEMINI_API_KEY)   keys.push(process.env.GEMINI_API_KEY);
@@ -47,21 +44,19 @@ function classifyError(msg: string): 'rate_limit' | 'not_retryable' | 'retryable
   if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
     return 'rate_limit';
   }
-  // 400 / 404 / model not found → tidak ada gunanya retry ke model/key lain
   if (
-    msg.includes('400') ||
-    msg.includes('404') ||
-    msg.includes('not found') ||
-    msg.includes('invalid') ||
-    msg.includes('API_KEY_INVALID') ||
-    msg.includes('INVALID_ARGUMENT')
+    msg.includes('400') || msg.includes('404') ||
+    msg.includes('not found') || msg.includes('invalid') ||
+    msg.includes('API_KEY_INVALID') || msg.includes('INVALID_ARGUMENT')
   ) {
     return 'not_retryable';
   }
   return 'retryable';
 }
 
-// ─── 6 Scene Definitions ──────────────────────────────────────────────────────
+// ─── 3 Scene Definitions ──────────────────────────────────────────────────────
+// Dikurangi 6 → 3: hemat quota free tier, tetap representatif untuk logo marketplace
+// Dipilih 3 yang paling visual-impactful: t-shirt, business card, mug
 const SCENES = [
   {
     scene: 'tshirt',
@@ -87,30 +82,6 @@ Using this exact logo (reproduce faithfully — same colors, shapes, typography)
 
 Using this exact logo (reproduce faithfully — same colors, shapes, typography), generate a photorealistic mockup of the logo printed on the side of a clean white ceramic coffee mug. Wooden table or minimal surface, warm cafe-like lighting, professional photography. Logo clearly visible and centered.`,
   },
-  {
-    scene: 'tote_bag',
-    label: '🛍️ Tote Bag',
-    buildPrompt: (title: string, desc: string, cat: string) =>
-      `You are given the logo image of "${title}", a ${cat} brand.${desc ? ` Brand description: ${desc}.` : ''}
-
-Using this exact logo (reproduce faithfully — same colors, shapes, typography), generate a photorealistic mockup of the logo screen-printed on a natural canvas tote bag. Displayed upright on a clean white or light background. Lifestyle photography quality, soft studio lighting.`,
-  },
-  {
-    scene: 'poster',
-    label: '🖼️ Poster',
-    buildPrompt: (title: string, desc: string, cat: string) =>
-      `You are given the logo image of "${title}", a ${cat} brand.${desc ? ` Brand description: ${desc}.` : ''}
-
-Using this exact logo (reproduce faithfully — same colors, shapes, typography), generate a photorealistic brand mockup with the logo on an A2 poster mounted on a clean white interior wall. Contemporary gallery or office setting, minimal design, professional interior photography.`,
-  },
-  {
-    scene: 'billboard',
-    label: '🏙️ Billboard',
-    buildPrompt: (title: string, desc: string, cat: string) =>
-      `You are given the logo image of "${title}", a ${cat} brand.${desc ? ` Brand description: ${desc}.` : ''}
-
-Using this exact logo (reproduce faithfully — same colors, shapes, typography), generate a photorealistic outdoor advertising mockup of the logo on a billboard in an urban street scene. Daytime, natural lighting, realistic city background. Wide-angle commercial visualization.`,
-  },
 ];
 
 // ─── Fetch logo sebagai base64 ────────────────────────────────────────────────
@@ -125,8 +96,6 @@ async function fetchLogoAsBase64(logoUrl: string): Promise<{ base64: string; mim
 }
 
 // ─── Call Gemini Image Generation API ────────────────────────────────────────
-// Model: gemini-2.0-flash-exp-image-generation
-// Endpoint: generateContent (standard) — BUKAN /predict seperti Imagen
 async function callGemini(
   model: string,
   prompt: string,
@@ -140,14 +109,12 @@ async function callGemini(
     contents: [
       {
         parts: [
-          // Image input dulu, lalu text prompt
           { inline_data: { mime_type: logoMime, data: logoBase64 } },
           { text: prompt },
         ],
       },
     ],
     generationConfig: {
-      // IMAGE + TEXT wajib keduanya, model butuh ini untuk aktifkan image output
       responseModalities: ['IMAGE', 'TEXT'],
     },
   };
@@ -159,7 +126,6 @@ async function callGemini(
     signal: AbortSignal.timeout(50_000),
   });
 
-  // Baca body sekali, simpan ke variable
   const responseText = await res.text();
 
   if (!res.ok) {
@@ -173,8 +139,9 @@ async function callGemini(
     throw new Error(`Gemini ${model} returned non-JSON: ${responseText.slice(0, 200)}`);
   }
 
-  const parts = (data as { candidates?: Array<{ content?: { parts?: Array<{ inline_data?: { data?: string } }> } }> })
-    ?.candidates?.[0]?.content?.parts ?? [];
+  const parts = (data as {
+    candidates?: Array<{ content?: { parts?: Array<{ inline_data?: { data?: string } }> } }>
+  })?.candidates?.[0]?.content?.parts ?? [];
 
   for (const part of parts) {
     if (part.inline_data?.data) {
@@ -217,7 +184,13 @@ async function uploadBufferToCloudinary(buffer: Buffer): Promise<string> {
   return result.secure_url as string;
 }
 
-// ─── Generate 1 scene dengan key rotation + error classification ──────────────
+// ─── Retry with exponential backoff untuk rate limit ─────────────────────────
+// Daripada langsung skip scene saat 429, tunggu lalu retry — jauh lebih robust
+async function sleep(ms: number) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+// ─── Generate 1 scene: key rotation + model fallback + retry on 429 ──────────
 async function generateScene(
   sceneConfig: (typeof SCENES)[0],
   title: string,
@@ -231,7 +204,6 @@ async function generateScene(
   const prompt = sceneConfig.buildPrompt(title, description, category);
   const errors: string[] = [];
 
-  // Urutan key: mulai dari assignedKey, lalu fallback ke key lain
   const keyOrder = [
     assignedKeyIndex,
     ...apiKeys.map((_, i) => i).filter(i => i !== assignedKeyIndex),
@@ -242,31 +214,42 @@ async function generateScene(
     const keyLabel = `key_${keyIdx + 1}`;
 
     for (const model of GEMINI_IMAGE_MODELS) {
-      try {
-        console.log(`[mockup] scene=${sceneConfig.scene} trying ${keyLabel}+${model}`);
-        const imgBuffer = await callGemini(model, prompt, logoBase64, logoMime, key);
-        const cloudUrl  = await uploadBufferToCloudinary(imgBuffer);
-        console.log(`[mockup] scene=${sceneConfig.scene} ✓ ${keyLabel}+${model}`);
-        return { scene: sceneConfig.scene, label: sceneConfig.label, url: cloudUrl };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        const errorType = classifyError(msg);
+      // Retry loop: max 3 kali untuk rate limit, dengan backoff 15s / 30s / 45s
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          console.log(`[mockup] scene=${sceneConfig.scene} ${keyLabel}+${model} attempt=${attempt}`);
+          const imgBuffer = await callGemini(model, prompt, logoBase64, logoMime, key);
+          const cloudUrl  = await uploadBufferToCloudinary(imgBuffer);
+          console.log(`[mockup] scene=${sceneConfig.scene} ✓ ${keyLabel}+${model}`);
+          return { scene: sceneConfig.scene, label: sceneConfig.label, url: cloudUrl };
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          const errorType = classifyError(msg);
+          console.warn(`[mockup] ${keyLabel}+${model} attempt=${attempt} [${errorType}]: ${msg.slice(0, 120)}`);
+          errors.push(`${keyLabel}+${model}[${errorType}]attempt${attempt}: ${msg.slice(0, 60)}`);
 
-        console.warn(`[mockup] ${keyLabel}+${model} failed [${errorType.toUpperCase()}]: ${msg.slice(0, 150)}`);
-        errors.push(`${keyLabel}+${model}[${errorType}]: ${msg.slice(0, 80)}`);
+          if (errorType === 'not_retryable') {
+            // 400/404 → tidak ada gunanya retry, langsung throw
+            throw new Error(`Non-retryable error on scene "${sceneConfig.scene}": ${msg}`);
+          }
 
-        if (errorType === 'rate_limit') {
-          // Key ini kena rate limit → skip semua model di key ini, coba key berikutnya
-          console.warn(`[mockup] ${keyLabel} rate limited, switching key…`);
+          if (errorType === 'rate_limit') {
+            if (attempt < 3) {
+              // Backoff: 15s, 30s, lalu give up ke key/model berikutnya
+              const waitMs = attempt * 15_000;
+              console.log(`[mockup] rate limit hit, waiting ${waitMs / 1000}s before retry…`);
+              await sleep(waitMs);
+              continue;
+            } else {
+              // Sudah 3x retry di key ini, skip ke key berikutnya
+              console.warn(`[mockup] ${keyLabel}+${model} rate limited after 3 attempts, switching key…`);
+              break;
+            }
+          }
+
+          // retryable (network error dll) → coba model berikutnya
           break;
         }
-
-        if (errorType === 'not_retryable') {
-          // 400/404/invalid → tidak ada gunanya retry model/key lain, langsung throw
-          throw new Error(`Non-retryable error on scene "${sceneConfig.scene}": ${msg}`);
-        }
-
-        // retryable → coba model berikutnya di key yang sama (kalau ada)
       }
     }
   }
@@ -310,7 +293,6 @@ export async function POST(req: NextRequest) {
 
     for (let i = 0; i < SCENES.length; i++) {
       const scene = SCENES[i];
-      // Round-robin: scene[0]→key[0], scene[1]→key[1], dst
       const assignedKeyIndex = i % apiKeys.length;
       console.log(`[mockup] scene ${i + 1}/${SCENES.length} (${scene.scene}) → key_${assignedKeyIndex + 1}`);
 
@@ -321,23 +303,24 @@ export async function POST(req: NextRequest) {
         results.push(result);
         console.log(`[mockup] ✓ ${i + 1}/${SCENES.length} done`);
       } catch (e) {
-        // Non-retryable error → skip scene ini, lanjut ke scene berikutnya
         console.error(`[mockup] scene skipped (${scene.scene}):`, e instanceof Error ? e.message : e);
       }
 
-      // Delay 35s antar scene — wajib untuk free tier image generation
-      // Free tier IPM limit: 2 images/menit = 1 image per 30s minimum
-      // 35s = safety margin ~17% di atas limit → hindari 429
-      // ⚠️ Rotasi API key TIDAK membantu jika key dari project yang sama (shared quota)
+      // Delay 8s antar scene — cukup untuk 10 RPM free tier (6s/req minimum)
+      // Lebih kecil dari sebelumnya karena sudah ada retry backoff di dalam generateScene
       if (i < SCENES.length - 1) {
-        console.log(`[mockup] waiting 35s before next scene (free tier IPM limit)…`);
-        await new Promise(r => setTimeout(r, 35_000));
+        console.log(`[mockup] waiting 8s before next scene…`);
+        await sleep(8_000);
       }
     }
 
     if (results.length === 0) {
       return NextResponse.json(
-        { error: 'Rate limit tercapai. Free tier Gemini hanya 2 images/menit per project. Coba lagi dalam 2–3 menit, atau gunakan API key dari Google Cloud project yang berbeda.' },
+        {
+          error: 'Semua scene gagal karena rate limit. ' +
+            'Pastikan API key berasal dari Google Cloud project yang BERBEDA (bukan key berbeda, project berbeda). ' +
+            'Atau tunggu 1 menit lalu coba lagi.',
+        },
         { status: 502 },
       );
     }
