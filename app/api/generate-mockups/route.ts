@@ -43,8 +43,8 @@ async function callGeminiImageAPI(
   logoBase64: string,
   logoMime: string,
 ): Promise<Buffer> {
-  const apiKey = process.env.GOOGLE_AI_API_KEY;
-  if (!apiKey) throw new Error('GOOGLE_AI_API_KEY not set');
+  const apiKey = process.env.GOOGLE_API_KEY;
+  if (!apiKey) throw new Error('GOOGLE_API_KEY not set');
 
   // Gunakan generateContent endpoint dengan responseModalities: ["IMAGE", "TEXT"]
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${apiKey}`;
@@ -245,8 +245,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'logo_url is required' }, { status: 400 });
   }
 
-  if (!process.env.GOOGLE_AI_API_KEY) {
-    return NextResponse.json({ error: 'GOOGLE_AI_API_KEY env var not set' }, { status: 500 });
+  if (!process.env.GOOGLE_API_KEY) {
+    return NextResponse.json({ error: 'GOOGLE_API_KEY env var not set' }, { status: 500 });
   }
 
   if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
@@ -281,7 +281,7 @@ export async function POST(req: NextRequest) {
 
     if (results.length === 0) {
       return NextResponse.json(
-        { error: 'Semua scene gagal. Cek GOOGLE_AI_API_KEY di Vercel env vars.' },
+        { error: 'Semua scene gagal. Cek GOOGLE_API_KEY di Vercel env vars.' },
         { status: 502 },
       );
     }
