@@ -179,7 +179,7 @@ function LogoGroundImporter({ adminToken, onImport, defaultUrl = '' }: LogoGroun
           onClick={handleScrape}
           disabled={isLoading || !url.trim()}
           style={{
-            padding: '10px 16px', borderRadius: 8, border: 'none',
+            padding: '10px 16px', borderRadius: 8,
             background: isLoading || !url.trim() ? 'var(--bg3)' : 'rgba(200,245,66,0.15)',
             color: isLoading || !url.trim() ? 'var(--muted)' : 'var(--accent)',
             cursor: isLoading || !url.trim() ? 'not-allowed' : 'pointer',
