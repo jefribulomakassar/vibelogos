@@ -99,14 +99,27 @@ function LogoUploadZone({ value, onChange, adminToken }: {
 // ─── AI Mockup Generator ──────────────────────────────────────────────────────
 interface MockupResult { scene: string; label: string; url: string; }
 
+// Step messages — estimasi waktu 6 scene × ~10s delay = ~1 menit
+const STEP_MESSAGES = [
+  '🤖 Mengirim logo ke Gemini AI…',
+  '🎨 Generating mockup scene 1/6…',
+  '🎨 Generating mockup scene 2/6…',
+  '🎨 Generating mockup scene 3/6…',
+  '🎨 Generating mockup scene 4/6…',
+  '🎨 Generating mockup scene 5/6…',
+  '🎨 Generating mockup scene 6/6…',
+  '☁️ Uploading ke Cloudinary…',
+];
+
 function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMockupsChange }: {
   logoUrl: string; title: string; category: string;
   adminToken: string; mockups: string[]; onMockupsChange: (urls: string[]) => void;
 }) {
   const [generating, setGenerating] = useState(false);
   const [results, setResults] = useState<MockupResult[]>([]);
-  const [step, setStep] = useState('');
+  const [stepIdx, setStepIdx] = useState(0);
   const [error, setError] = useState('');
+  const stepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (mockups.length > 0 && results.length === 0) {
@@ -115,29 +128,44 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Auto-advance step messages setiap ~12s (sedikit lebih dari delay antar scene)
+  const startStepTimer = () => {
+    setStepIdx(0);
+    stepTimerRef.current = setInterval(() => {
+      setStepIdx(prev => Math.min(prev + 1, STEP_MESSAGES.length - 1));
+    }, 12_000);
+  };
+
+  const stopStepTimer = () => {
+    if (stepTimerRef.current) {
+      clearInterval(stepTimerRef.current);
+      stepTimerRef.current = null;
+    }
+  };
+
   const generate = async () => {
     if (!logoUrl) { alert('Upload logo dulu sebelum generate mockup!'); return; }
     setGenerating(true);
     setError('');
     setResults([]);
-    setStep('🤖 Gemini Flash sedang menganalisis logo…');
+    startStepTimer();
+
     try {
       const res = await fetch('/api/generate-mockups', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
         body: JSON.stringify({ logo_url: logoUrl, title: title || 'Logo', category: category || 'Brand' }),
       });
-      setStep('🎨 Rendering mockup dengan AI…');
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed');
       setResults(data.mockups || []);
       onMockupsChange((data.mockups as MockupResult[]).map(m => m.url));
-      setStep('');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
-      setStep('');
     } finally {
+      stopStepTimer();
       setGenerating(false);
+      setStepIdx(0);
     }
   };
 
@@ -151,8 +179,15 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <label style={labelStyle}>Mockup Images</label>
-        <span style={{ fontSize: 11, color: '#555' }}>Powered by Gemini Flash + Pollinations</span>
+        <span style={{ fontSize: 11, color: '#555' }}>Powered by Gemini 2.0 Flash</span>
       </div>
+
+      {/* Estimasi waktu warning */}
+      {!generating && logoUrl && (
+        <div style={{ background: 'rgba(200,245,66,0.06)', border: '1px solid rgba(200,245,66,0.15)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          ⏱️ Estimasi ~1–2 menit untuk 6 scene mockup
+        </div>
+      )}
 
       <button
         onClick={generate}
@@ -171,7 +206,7 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
         {generating ? (
           <>
             <span style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid var(--muted)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-            {step || 'Generating…'}
+            {STEP_MESSAGES[stepIdx]}
           </>
         ) : (
           <>
@@ -237,7 +272,7 @@ const STORAGE_KEY = 'vl_admin_token';
 export default function AdminPage() {
   const [token, setToken] = useState('');
   const [authed, setAuthed] = useState(false);
-  const [checking, setChecking] = useState(true); // prevent flash of login screen
+  const [checking, setChecking] = useState(true);
   const [logos, setLogos] = useState<Logo[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -249,7 +284,6 @@ export default function AdminPage() {
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000); };
 
-  // headers always uses latest token via closure — use ref pattern
   const tokenRef = useRef(token);
   useEffect(() => { tokenRef.current = token; }, [token]);
   const getHeaders = () => ({ 'Content-Type': 'application/json', 'x-admin-token': tokenRef.current });
@@ -258,14 +292,14 @@ export default function AdminPage() {
     setLoading(true);
     const res = await fetch('/api/logos-data', {
       headers: { 'x-admin-token': tokenRef.current },
-      cache: 'no-store', // ← tambah ini
+      cache: 'no-store',
     });
     const data = await res.json();
     setLogos(data.logos || []);
     setLoading(false);
   }, []);
 
-  // ── Auto-login from localStorage ─────────────────────────────────────────
+  // ── Auto-login dari localStorage ──────────────────────────────────────────
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) { setChecking(false); return; }
@@ -342,12 +376,6 @@ export default function AdminPage() {
     } catch (e: unknown) {
       alert('Error: ' + (e instanceof Error ? e.message : String(e)));
     } finally { setSaving(false); }
-  };
-
-  const handleDelete = async (id: number) => {
-    const res = await fetch(`/api/logos-data/${id}`, { method: 'DELETE', headers: getHeaders() });
-    if (res.ok) { showToast('🗑 Logo dihapus'); fetchLogos(); }
-    setDeleteId(null);
   };
 
   const f = (field: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
@@ -560,3 +588,6 @@ export default function AdminPage() {
     </div>
   );
 }
+
+// ─── handleDelete dibutuhkan tapi hilang dari scope ───────────────────────────
+// Ini sudah ada di dalam AdminPage sebagai handleDelete, tidak perlu diekspos
