@@ -1,7 +1,7 @@
 // app/api/scrape-logoground/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 function checkAdmin(req: NextRequest) {
   return req.headers.get('x-admin-token') === process.env.ADMIN_TOKEN;
@@ -121,28 +121,13 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const res = await fetch(`https://www.logoground.com/logo.php?id=${logoId}`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Referer': 'https://www.google.com/',
-        'Origin': 'https://www.logoground.com',
-        'Connection': 'keep-alive',
-        'Cache-Control': 'max-age=0',
-        'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-        'Sec-Ch-Ua-Mobile': '?0',
-        'Sec-Ch-Ua-Platform': '"Windows"',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Upgrade-Insecure-Requests': '1',
-      },
-      signal: AbortSignal.timeout(15_000),
-      cache: 'no-store',
-    });
+    const res = await fetch(
+      `https://app.scrapingbee.com/api/v1/?api_key=${process.env.SCRAPINGBEE_API_KEY}&url=${encodeURIComponent(`https://www.logoground.com/logo.php?id=${logoId}`)}&render_js=false`,
+      {
+        signal: AbortSignal.timeout(25_000),
+        cache: 'no-store',
+      }
+    );
 
     if (!res.ok) {
       return NextResponse.json(
