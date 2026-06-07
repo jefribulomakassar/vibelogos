@@ -13,20 +13,12 @@ interface MockupResult {
   url: string;
 }
 
-interface PollinationsModel {
-  name: string;
-  model: string;
-}
-
-// ─── Pollinations Models (free, no API key) ───────────────────────────────────
-// Rotasi antar model berbeda di Pollinations — jika satu rate-limit, pakai berikutnya
-const POLLINATIONS_MODELS: PollinationsModel[] = [
-  { name: 'flux',        model: 'flux' },
-  { name: 'flux-realism',model: 'flux-realism' },
-  { name: 'flux-pro',    model: 'flux-pro' },
-  { name: 'turbo',       model: 'turbo' },
-  { name: 'flux-anime',  model: 'flux-anime' },
-  { name: 'dall-e-3',    model: 'dall-e-3' },
+// ─── Gemini Models — rotasi jika rate-limit (semua free tier) ─────────────────
+// Free tier: 1500 req/day (Flash), 50 req/day (Pro)
+const GEMINI_MODELS = [
+  'gemini-2.0-flash-preview-image-generation', // primary — paling cepat
+  'gemini-2.0-flash-exp-image-generation',      // fallback 1
+  'gemini-1.5-flash-latest',                    // fallback 2 (support image output via multimodal)
 ];
 
 // ─── 6 Scene Definitions ──────────────────────────────────────────────────────
@@ -34,66 +26,126 @@ const SCENES = [
   {
     scene: 'tshirt',
     label: '👕 T-Shirt',
-    buildPrompt: (title: string, cat: string) =>
-      `Professional product mockup, white t-shirt flat lay on clean surface, "${title}" ${cat} brand logo printed centered on chest, soft studio lighting, minimal background, high quality commercial photography, 4k`,
+    buildPrompt: (title: string, desc: string, cat: string) =>
+      `You are given the logo image of "${title}", a ${cat} brand. ${desc ? `Brand description: ${desc}.` : ''}
+
+Generate a photorealistic product mockup showing this EXACT logo (reproduce the logo faithfully — same colors, shapes, typography) printed centered on the chest of a clean white t-shirt. The t-shirt should be displayed as a flat lay on a smooth light surface. Studio lighting, minimal white/grey background, commercial photography quality, 4K resolution. The logo must be clearly visible and accurate.`,
   },
   {
     scene: 'business_card',
     label: '💳 Business Card',
-    buildPrompt: (title: string, cat: string) =>
-      `Professional business card mockup, premium matte white card on marble surface, "${title}" ${cat} brand logo on front, elegant minimal design, soft shadow, top-down view, studio photography, 4k`,
+    buildPrompt: (title: string, desc: string, cat: string) =>
+      `You are given the logo image of "${title}", a ${cat} brand. ${desc ? `Brand description: ${desc}.` : ''}
+
+Generate a photorealistic business card mockup showing this EXACT logo (reproduce faithfully — same colors, shapes, typography) prominently on the front of a premium matte white business card. The card should rest on a marble or dark textured surface, slight shadow, elegant top-down angle. Studio photography quality. The logo must be clearly visible and accurate.`,
   },
   {
     scene: 'mug',
     label: '☕ Mug',
-    buildPrompt: (title: string, cat: string) =>
-      `Product mockup, white ceramic coffee mug on wooden table, "${title}" ${cat} brand logo printed on mug, cozy cafe background, warm lighting, professional photography, high resolution`,
+    buildPrompt: (title: string, desc: string, cat: string) =>
+      `You are given the logo image of "${title}", a ${cat} brand. ${desc ? `Brand description: ${desc}.` : ''}
+
+Generate a photorealistic product mockup showing this EXACT logo (reproduce faithfully — same colors, shapes, typography) printed on the side of a clean white ceramic coffee mug. Place the mug on a wooden table or minimal surface, warm cafe-like lighting, professional photography. The logo must be clearly visible, accurate, and centered on the mug.`,
   },
   {
     scene: 'tote_bag',
-    label: '🛍 Tote Bag',
-    buildPrompt: (title: string, cat: string) =>
-      `Product mockup, natural canvas tote bag hanging, "${title}" ${cat} brand logo screen printed on front, clean white background, professional studio lighting, lifestyle photography, 4k`,
+    label: '🛍️ Tote Bag',
+    buildPrompt: (title: string, desc: string, cat: string) =>
+      `You are given the logo image of "${title}", a ${cat} brand. ${desc ? `Brand description: ${desc}.` : ''}
+
+Generate a photorealistic product mockup showing this EXACT logo (reproduce faithfully — same colors, shapes, typography) screen-printed on the front of a natural canvas tote bag. The bag should hang or be displayed upright on a clean white or light background. Lifestyle photography quality, soft studio lighting. The logo must be clearly visible and accurate.`,
   },
   {
     scene: 'poster',
-    label: '🖼 Poster',
-    buildPrompt: (title: string, cat: string) =>
-      `Brand mockup, A2 poster on modern wall interior, "${title}" ${cat} logo featured prominently, contemporary minimalist design, gallery wall setting, professional photography, high quality`,
+    label: '🖼️ Poster',
+    buildPrompt: (title: string, desc: string, cat: string) =>
+      `You are given the logo image of "${title}", a ${cat} brand. ${desc ? `Brand description: ${desc}.` : ''}
+
+Generate a photorealistic brand mockup showing this EXACT logo (reproduce faithfully — same colors, shapes, typography) featured large and prominently on an A2 poster mounted on a clean white interior wall. Contemporary gallery or office setting, minimal design, professional interior photography. The logo must dominate the poster and be clearly accurate.`,
   },
   {
     scene: 'billboard',
-    label: '🏙 Billboard',
-    buildPrompt: (title: string, cat: string) =>
-      `Outdoor advertising mockup, large billboard on urban street, "${title}" ${cat} brand logo displayed, city background, daylight, realistic 3D render, professional commercial visualization, wide angle`,
+    label: '🏙️ Billboard',
+    buildPrompt: (title: string, desc: string, cat: string) =>
+      `You are given the logo image of "${title}", a ${cat} brand. ${desc ? `Brand description: ${desc}.` : ''}
+
+Generate a photorealistic outdoor advertising mockup showing this EXACT logo (reproduce faithfully — same colors, shapes, typography) displayed large on a billboard in an urban street scene. Daytime, natural lighting, realistic city background. Wide-angle commercial visualization, high quality render. The logo must be clearly visible, dominant, and accurate.`,
   },
 ];
 
-// ─── Pollinations Fetch (single attempt) ─────────────────────────────────────
-async function fetchPollinations(
-  prompt: string,
-  model: string,
-  seed: number,
-): Promise<string> {
-  const encoded = encodeURIComponent(prompt);
-  const url = `https://image.pollinations.ai/prompt/${encoded}?model=${model}&width=1024&height=1024&seed=${seed}&nologo=true&enhance=true`;
+// ─── Fetch logo sebagai base64 ────────────────────────────────────────────────
+async function fetchLogoAsBase64(logoUrl: string): Promise<{ base64: string; mimeType: string }> {
+  const res = await fetch(logoUrl, { signal: AbortSignal.timeout(15_000) });
+  if (!res.ok) throw new Error(`Failed to fetch logo: ${res.status}`);
 
-  const res = await fetch(url, {
-    method: 'GET',
-    signal: AbortSignal.timeout(25_000), // 25s timeout per model
-  });
-
-  if (!res.ok) throw new Error(`Pollinations ${model} responded ${res.status}`);
-
-  // Pollinations returns the image directly — re-upload ke Cloudinary
+  const contentType = res.headers.get('content-type') || 'image/png';
+  // Normalize mime type
+  const mimeType = contentType.split(';')[0].trim() as 'image/png' | 'image/jpeg' | 'image/webp';
   const buffer = await res.arrayBuffer();
-  if (buffer.byteLength < 10_000) throw new Error(`${model} returned suspiciously small image`);
-
-  return uploadBufferToCloudinary(Buffer.from(buffer));
+  const base64 = Buffer.from(buffer).toString('base64');
+  return { base64, mimeType };
 }
 
-// ─── Upload Buffer → Cloudinary (unsigned won't work server-side for buffers,
-//     jadi pakai signed upload via API secret langsung) ───────────────────────
+// ─── Call Gemini Image Generation API ────────────────────────────────────────
+async function callGemini(
+  model: string,
+  prompt: string,
+  logoBase64: string,
+  logoMime: string,
+  apiKey: string,
+): Promise<Buffer> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  const body = {
+    contents: [
+      {
+        parts: [
+          // Input 1: gambar logo asli
+          {
+            inline_data: {
+              mime_type: logoMime,
+              data: logoBase64,
+            },
+          },
+          // Input 2: instruksi prompt
+          {
+            text: prompt,
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      responseModalities: ['IMAGE', 'TEXT'],
+      // Untuk model image generation
+    },
+  };
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(45_000),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Gemini ${model} error ${res.status}: ${errText.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+
+  // Extract image dari response
+  const parts = data?.candidates?.[0]?.content?.parts ?? [];
+  for (const part of parts) {
+    if (part.inline_data?.data) {
+      return Buffer.from(part.inline_data.data, 'base64');
+    }
+  }
+
+  throw new Error(`Gemini ${model} returned no image in response`);
+}
+
+// ─── Upload Buffer → Cloudinary ───────────────────────────────────────────────
 async function uploadBufferToCloudinary(buffer: Buffer): Promise<string> {
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME!;
   const apiKey    = process.env.CLOUDINARY_API_KEY!;
@@ -107,10 +159,9 @@ async function uploadBufferToCloudinary(buffer: Buffer): Promise<string> {
     .update(paramsToSign + apiSecret)
     .digest('hex');
 
-  // Convert buffer → Blob for FormData
-  const blob = new Blob([new Uint8Array(buffer)], { type: 'image/jpeg' });
+  const blob = new Blob([new Uint8Array(buffer)], { type: 'image/png' });
   const fd = new FormData();
-  fd.append('file', blob, 'mockup.jpg');
+  fd.append('file', blob, 'mockup.png');
   fd.append('api_key', apiKey);
   fd.append('timestamp', String(timestamp));
   fd.append('signature', signature);
@@ -121,38 +172,41 @@ async function uploadBufferToCloudinary(buffer: Buffer): Promise<string> {
     { method: 'POST', body: fd, signal: AbortSignal.timeout(20_000) },
   );
 
-  const data = await res.json();
-  if (!data.secure_url) throw new Error(data.error?.message || 'Cloudinary upload failed');
-  return data.secure_url as string;
+  const result = await res.json();
+  if (!result.secure_url) throw new Error(result.error?.message || 'Cloudinary upload failed');
+  return result.secure_url as string;
 }
 
-// ─── Generate 1 scene dengan model rotation ──────────────────────────────────
+// ─── Generate 1 scene dengan Gemini model rotation ───────────────────────────
 async function generateScene(
   sceneConfig: (typeof SCENES)[0],
   title: string,
+  description: string,
   category: string,
+  logoBase64: string,
+  logoMime: string,
+  apiKey: string,
 ): Promise<MockupResult> {
-  const prompt = sceneConfig.buildPrompt(title, category);
-  const seed   = Math.floor(Math.random() * 999_999);
-
+  const prompt = sceneConfig.buildPrompt(title, description, category);
   const errors: string[] = [];
 
-  for (const provider of POLLINATIONS_MODELS) {
+  for (const model of GEMINI_MODELS) {
     try {
-      console.log(`[mockup] scene=${sceneConfig.scene} trying model=${provider.model}`);
-      const url = await fetchPollinations(prompt, provider.model, seed);
-      console.log(`[mockup] scene=${sceneConfig.scene} ✓ model=${provider.model}`);
-      return { scene: sceneConfig.scene, label: sceneConfig.label, url };
+      console.log(`[mockup] scene=${sceneConfig.scene} trying model=${model}`);
+      const imgBuffer = await callGemini(model, prompt, logoBase64, logoMime, apiKey);
+      const cloudUrl  = await uploadBufferToCloudinary(imgBuffer);
+      console.log(`[mockup] scene=${sceneConfig.scene} ✓ model=${model}`);
+      return { scene: sceneConfig.scene, label: sceneConfig.label, url: cloudUrl };
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn(`[mockup] scene=${sceneConfig.scene} model=${provider.model} failed: ${msg}`);
-      errors.push(`${provider.model}: ${msg}`);
-      // Jeda singkat sebelum coba model berikutnya
-      await new Promise(r => setTimeout(r, 800));
+      console.warn(`[mockup] scene=${sceneConfig.scene} model=${model} failed: ${msg}`);
+      errors.push(`${model}: ${msg}`);
+      // Jeda sebelum coba model berikutnya
+      await new Promise(r => setTimeout(r, 1_000));
     }
   }
 
-  throw new Error(`All providers failed for scene "${sceneConfig.scene}": ${errors.join(' | ')}`);
+  throw new Error(`All Gemini models failed for "${sceneConfig.scene}": ${errors.join(' | ')}`);
 }
 
 // ─── POST /api/generate-mockups ───────────────────────────────────────────────
@@ -161,33 +215,47 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { logo_url, title = 'Logo', category = 'Brand' } = await req.json().catch(() => ({}));
+  const {
+    logo_url,
+    title       = 'Logo',
+    description = '',
+    category    = 'Brand',
+  } = await req.json().catch(() => ({}));
 
   if (!logo_url) {
     return NextResponse.json({ error: 'logo_url is required' }, { status: 400 });
   }
 
-  // Validasi env Cloudinary
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({ error: 'GEMINI_API_KEY env var not set' }, { status: 500 });
+  }
+
   if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
     return NextResponse.json({ error: 'Cloudinary env vars not configured' }, { status: 500 });
   }
 
   try {
-    // Generate semua 6 scene secara PARALEL (lebih cepat)
-    // Tapi batasi concurrency 3 agar tidak langsung rate-limit semua
+    // Fetch logo sekali, reuse untuk semua scene
+    console.log('[mockup] fetching logo:', logo_url);
+    const { base64: logoBase64, mimeType: logoMime } = await fetchLogoAsBase64(logo_url);
+    console.log(`[mockup] logo fetched, mime=${logoMime}, size=${logoBase64.length} chars`);
+
+    // Generate 6 scene dalam 2 batch (3 paralel sekaligus) agar tidak flood API
     const results: MockupResult[] = [];
     const batches = [SCENES.slice(0, 3), SCENES.slice(3, 6)];
 
     for (const batch of batches) {
       const batchResults = await Promise.allSettled(
-        batch.map(scene => generateScene(scene, title, category)),
+        batch.map(scene =>
+          generateScene(scene, title, description, category, logoBase64, logoMime, apiKey)
+        ),
       );
 
       for (const r of batchResults) {
         if (r.status === 'fulfilled') {
           results.push(r.value);
         } else {
-          // Scene gagal semua provider — log tapi jangan stop semua
           console.error('[mockup] scene skipped:', r.reason);
         }
       }
@@ -195,7 +263,7 @@ export async function POST(req: NextRequest) {
 
     if (results.length === 0) {
       return NextResponse.json(
-        { error: 'Semua scene gagal digenerate. Coba lagi beberapa saat.' },
+        { error: 'Semua scene gagal digenerate. Periksa GEMINI_API_KEY atau coba lagi.' },
         { status: 502 },
       );
     }
