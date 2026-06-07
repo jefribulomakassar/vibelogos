@@ -1,35 +1,33 @@
+// app/api/generate-mockups/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 
 export const maxDuration = 300;
 
-// ─── Auth ─────────────────────────────────────────────────────────────────────
 function checkAdmin(req: NextRequest) {
   return req.headers.get('x-admin-token') === process.env.ADMIN_TOKEN;
 }
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 interface MockupResult {
   scene: string;
   label: string;
   url: string;
 }
 
-// ─── OpenRouter model untuk image generation + image input ───────────────────
-// google/gemini-2.5-flash-image  = Nano Banana GA, support image-in + image-out
-// google/gemini-3.1-flash-image-preview = Nano Banana 2, lebih baru
-// Endpoint: /api/v1/chat/completions (OpenAI-compatible)
-// modalities: ["image", "text"] wajib untuk dapat image output
+// ─── Model list — urutan prioritas ───────────────────────────────────────────
 const OR_MODELS = [
-  'google/gemini-2.5-flash-image:free',
-  'google/gemini-3.1-flash-image-preview:free',
+  'google/gemini-2.0-flash-exp:free',          // image-in, text-out (reliable free)
+  'google/gemini-2.5-flash-preview:free',       // fallback
+  'google/gemini-2.5-flash-image:free',         // image-in + image-out (kalau tersedia)
+  'google/gemini-3.1-flash-image-preview:free', // newest, mungkin belum stabil
 ];
 
-// ─── 3 Scene Definitions ──────────────────────────────────────────────────────
 const SCENES = [
   {
     scene: 'tshirt',
     label: '👕 T-Shirt',
+    pollinationsPrompt: (title: string) =>
+      `photorealistic mockup of "${title}" logo printed centered on chest of clean white t-shirt, flat lay, studio lighting, minimal white background, 4K commercial photography`,
     buildPrompt: (title: string, desc: string, cat: string) =>
       `You are given the logo image of "${title}", a ${cat} brand.${desc ? ` Brand: ${desc}.` : ''}
 
@@ -38,6 +36,8 @@ Using this exact logo (reproduce faithfully — same colors, shapes, typography)
   {
     scene: 'business_card',
     label: '💳 Business Card',
+    pollinationsPrompt: (title: string) =>
+      `photorealistic business card mockup with "${title}" logo on front of premium matte white card, marble surface, elegant top-down angle, studio photography`,
     buildPrompt: (title: string, desc: string, cat: string) =>
       `You are given the logo image of "${title}", a ${cat} brand.${desc ? ` Brand: ${desc}.` : ''}
 
@@ -46,6 +46,8 @@ Using this exact logo (reproduce faithfully — same colors, shapes, typography)
   {
     scene: 'mug',
     label: '☕ Mug',
+    pollinationsPrompt: (title: string) =>
+      `photorealistic mockup of "${title}" logo on clean white ceramic coffee mug, wooden table, warm cafe lighting, professional photography, logo centered`,
     buildPrompt: (title: string, desc: string, cat: string) =>
       `You are given the logo image of "${title}", a ${cat} brand.${desc ? ` Brand: ${desc}.` : ''}
 
@@ -53,10 +55,16 @@ Using this exact logo (reproduce faithfully — same colors, shapes, typography)
   },
 ];
 
-// ─── Call OpenRouter image generation ────────────────────────────────────────
-// OpenRouter pakai /api/v1/chat/completions (OpenAI-compatible)
-// Image output ada di: choices[0].message.images[].imageUrl.url (base64 data URL)
-// Image input dikirim sebagai content part type "image_url"
+// ─── Pollinations AI fallback (no key needed) ─────────────────────────────────
+async function generateViaPollinations(prompt: string): Promise<Buffer> {
+  const encoded = encodeURIComponent(prompt);
+  const url = `https://image.pollinations.ai/prompt/${encoded}?width=1024&height=1024&nologo=true&enhance=true`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+  if (!res.ok) throw new Error(`Pollinations error ${res.status}`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+// ─── Call OpenRouter ──────────────────────────────────────────────────────────
 async function callOpenRouter(
   model: string,
   prompt: string,
@@ -64,32 +72,33 @@ async function callOpenRouter(
   logoMime: string,
 ): Promise<Buffer> {
   const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new Error('OPENROUTER_API_KEY env var not set');
+  if (!apiKey) throw new Error('OPENROUTER_API_KEY not set');
 
-  const body = {
+  // Tentukan apakah model ini support image output
+  const isImageOutModel =
+    model.includes('image') && !model.includes('gemini-2.0-flash-exp');
+
+  const body: Record<string, unknown> = {
     model,
     messages: [
       {
         role: 'user',
         content: [
-          // Image input (logo) sebagai base64 data URL
           {
             type: 'image_url',
-            image_url: {
-              url: `data:${logoMime};base64,${logoBase64}`,
-            },
+            image_url: { url: `data:${logoMime};base64,${logoBase64}` },
           },
-          // Text prompt
-          {
-            type: 'text',
-            text: prompt,
-          },
+          { type: 'text', text: prompt },
         ],
       },
     ],
-    // Wajib untuk dapat image output dari Gemini via OpenRouter
-    modalities: ['image', 'text'],
+    max_tokens: 1024,
   };
+
+  // modalities hanya untuk model image-out
+  if (isImageOutModel) {
+    body.modalities = ['image', 'text'];
+  }
 
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -100,58 +109,60 @@ async function callOpenRouter(
       'X-Title': 'VibeLogo Admin',
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
+    signal: AbortSignal.timeout(90_000),
   });
 
   const responseText = await res.text();
 
   if (!res.ok) {
-    throw new Error(`OpenRouter ${model} error ${res.status}: ${responseText.slice(0, 400)}`);
+    throw new Error(`OpenRouter ${model} ${res.status}: ${responseText.slice(0, 400)}`);
   }
 
   let data: unknown;
   try {
     data = JSON.parse(responseText);
   } catch {
-    throw new Error(`OpenRouter non-JSON response: ${responseText.slice(0, 200)}`);
+    throw new Error(`Non-JSON response: ${responseText.slice(0, 200)}`);
   }
 
-  // Cek response format OpenRouter: choices[0].message.images[] atau inline_data di content
   const message = (data as {
     choices?: Array<{
       message?: {
         images?: Array<{ imageUrl?: { url?: string } }>;
-        content?: Array<{ type?: string; image_url?: { url?: string }; inline_data?: { data?: string } }> | string;
+        content?: Array<{
+          type?: string;
+          image_url?: { url?: string };
+          inline_data?: { data?: string; mime_type?: string };
+        }> | string;
       };
     }>;
   })?.choices?.[0]?.message;
 
-  // Format 1: message.images (OpenRouter SDK format)
-  if (message?.images && message.images.length > 0) {
+  if (!message) {
+    throw new Error(`No message in response: ${JSON.stringify(data).slice(0, 200)}`);
+  }
+
+  // Format 1: message.images[]
+  if (message.images?.length) {
     const imgUrl = message.images[0]?.imageUrl?.url;
     if (imgUrl) {
-      // Bisa berupa data URL (data:image/png;base64,...) atau URL biasa
       if (imgUrl.startsWith('data:')) {
-        const base64Part = imgUrl.split(',')[1];
-        return Buffer.from(base64Part, 'base64');
+        return Buffer.from(imgUrl.split(',')[1], 'base64');
       }
-      // Kalau URL biasa, fetch dulu
-      const imgRes = await fetch(imgUrl, { signal: AbortSignal.timeout(20_000) });
-      if (!imgRes.ok) throw new Error(`Failed to fetch generated image: ${imgRes.status}`);
+      const imgRes = await fetch(imgUrl, { signal: AbortSignal.timeout(30_000) });
+      if (!imgRes.ok) throw new Error(`Fetch generated image failed: ${imgRes.status}`);
       return Buffer.from(await imgRes.arrayBuffer());
     }
   }
 
-  // Format 2: message.content sebagai array (Gemini multimodal format via OR)
-  if (Array.isArray(message?.content)) {
+  // Format 2: content array
+  if (Array.isArray(message.content)) {
     for (const part of message.content) {
       if (part.type === 'image_url' && part.image_url?.url) {
         const url = part.image_url.url;
-        if (url.startsWith('data:')) {
-          return Buffer.from(url.split(',')[1], 'base64');
-        }
-        const imgRes = await fetch(url, { signal: AbortSignal.timeout(20_000) });
-        if (!imgRes.ok) throw new Error(`Failed to fetch image: ${imgRes.status}`);
+        if (url.startsWith('data:')) return Buffer.from(url.split(',')[1], 'base64');
+        const imgRes = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+        if (!imgRes.ok) throw new Error(`Fetch image failed: ${imgRes.status}`);
         return Buffer.from(await imgRes.arrayBuffer());
       }
       if (part.type === 'inline_data' && part.inline_data?.data) {
@@ -160,7 +171,13 @@ async function callOpenRouter(
     }
   }
 
-  throw new Error(`OpenRouter ${model} returned no image. Response: ${JSON.stringify(data).slice(0, 300)}`);
+  // Format 3: content string (text-only model → tidak ada image output)
+  // Kalau model text-only, throw agar fallback ke Pollinations
+  if (typeof message.content === 'string') {
+    throw new Error(`Model ${model} returned text-only (no image output). Use image-out model.`);
+  }
+
+  throw new Error(`No image found in response: ${JSON.stringify(data).slice(0, 300)}`);
 }
 
 // ─── Upload Buffer → Cloudinary ───────────────────────────────────────────────
@@ -187,7 +204,7 @@ async function uploadBufferToCloudinary(buffer: Buffer): Promise<string> {
 
   const res = await fetch(
     `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
-    { method: 'POST', body: fd, signal: AbortSignal.timeout(20_000) },
+    { method: 'POST', body: fd, signal: AbortSignal.timeout(30_000) },
   );
 
   const result = await res.json();
@@ -195,15 +212,20 @@ async function uploadBufferToCloudinary(buffer: Buffer): Promise<string> {
   return result.secure_url as string;
 }
 
-// ─── Classify error ────────────────────────────────────────────────────────────
 function classifyError(msg: string): 'rate_limit' | 'not_retryable' | 'retryable' {
-  if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota') || msg.includes('rate limit')) {
-    return 'rate_limit';
-  }
-  if (msg.includes('400') || msg.includes('404') || msg.includes('not found') ||
-      msg.includes('invalid') || msg.includes('INVALID_ARGUMENT')) {
-    return 'not_retryable';
-  }
+  if (
+    msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') ||
+    msg.includes('quota') || msg.includes('rate limit') ||
+    msg.includes('too many') || msg.includes('capacity')
+  ) return 'rate_limit';
+
+  if (
+    msg.includes('400') || msg.includes('404') ||
+    msg.includes('not found') || msg.includes('invalid') ||
+    msg.includes('INVALID_ARGUMENT') || msg.includes('not support') ||
+    msg.includes('text-only')
+  ) return 'not_retryable';
+
   return 'retryable';
 }
 
@@ -211,7 +233,6 @@ function sleep(ms: number) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-// ─── Fetch logo sebagai base64 ────────────────────────────────────────────────
 async function fetchLogoAsBase64(logoUrl: string): Promise<{ base64: string; mimeType: string }> {
   const res = await fetch(logoUrl, { signal: AbortSignal.timeout(15_000) });
   if (!res.ok) throw new Error(`Failed to fetch logo: ${res.status}`);
@@ -222,7 +243,7 @@ async function fetchLogoAsBase64(logoUrl: string): Promise<{ base64: string; mim
   return { base64, mimeType };
 }
 
-// ─── Generate 1 scene dengan model fallback + retry ───────────────────────────
+// ─── Generate 1 scene: coba OR models dulu, fallback ke Pollinations ──────────
 async function generateScene(
   sceneConfig: (typeof SCENES)[0],
   title: string,
@@ -233,36 +254,57 @@ async function generateScene(
 ): Promise<MockupResult> {
   const prompt = sceneConfig.buildPrompt(title, description, category);
   const errors: string[] = [];
+  const hasApiKey = !!process.env.OPENROUTER_API_KEY;
 
-  for (const model of OR_MODELS) {
-    // Retry max 2x untuk rate limit, backoff 10s / 20s
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        console.log(`[mockup] scene=${sceneConfig.scene} model=${model} attempt=${attempt}`);
-        const imgBuffer = await callOpenRouter(model, prompt, logoBase64, logoMime);
-        const cloudUrl  = await uploadBufferToCloudinary(imgBuffer);
-        console.log(`[mockup] ✓ scene=${sceneConfig.scene} model=${model}`);
-        return { scene: sceneConfig.scene, label: sceneConfig.label, url: cloudUrl };
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        const errType = classifyError(msg);
-        console.warn(`[mockup] scene=${sceneConfig.scene} model=${model} attempt=${attempt} [${errType}]: ${msg.slice(0, 150)}`);
-        errors.push(`${model}[${errType}]att${attempt}: ${msg.slice(0, 80)}`);
+  // ── Coba OpenRouter models (hanya image-out models) ──
+  if (hasApiKey) {
+    // Filter ke model yg support image output saja
+    const imageOutModels = OR_MODELS.filter(m =>
+      m.includes('image') || m.includes('imagen')
+    );
 
-        if (errType === 'not_retryable') throw new Error(`Non-retryable: ${msg}`);
+    for (const model of imageOutModels) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          console.log(`[mockup] scene=${sceneConfig.scene} model=${model} attempt=${attempt}`);
+          const imgBuffer = await callOpenRouter(model, prompt, logoBase64, logoMime);
+          const cloudUrl  = await uploadBufferToCloudinary(imgBuffer);
+          console.log(`[mockup] ✓ OR scene=${sceneConfig.scene}`);
+          return { scene: sceneConfig.scene, label: sceneConfig.label, url: cloudUrl };
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          const errType = classifyError(msg);
+          console.warn(`[mockup] ${model} att${attempt} [${errType}]: ${msg.slice(0, 120)}`);
+          errors.push(`${model.split('/')[1]}[${errType}]: ${msg.slice(0, 60)}`);
 
-        if (errType === 'rate_limit' && attempt < 2) {
-          await sleep(attempt * 10_000); // 10s lalu 20s
-          continue;
+          if (errType === 'not_retryable') break; // coba model berikutnya
+
+          if (errType === 'rate_limit' && attempt < 2) {
+            await sleep(15_000);
+            continue;
+          }
+          break;
         }
-
-        // retryable atau rate_limit habis attempt → coba model berikutnya
-        break;
       }
     }
+    console.warn(`[mockup] OR failed for ${sceneConfig.scene}, falling back to Pollinations`);
   }
 
-  throw new Error(`All models failed for "${sceneConfig.scene}": ${errors.join(' | ')}`);
+  // ── Fallback: Pollinations AI (free, no key) ──
+  try {
+    console.log(`[mockup] Pollinations fallback: scene=${sceneConfig.scene}`);
+    const pollPrompt = sceneConfig.pollinationsPrompt(title);
+    const imgBuffer = await generateViaPollinations(pollPrompt);
+    const cloudUrl  = await uploadBufferToCloudinary(imgBuffer);
+    console.log(`[mockup] ✓ Pollinations scene=${sceneConfig.scene}`);
+    return { scene: sceneConfig.scene, label: sceneConfig.label, url: cloudUrl };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    errors.push(`pollinations: ${msg.slice(0, 80)}`);
+    console.error(`[mockup] Pollinations also failed: ${msg}`);
+  }
+
+  throw new Error(`All sources failed for "${sceneConfig.scene}": ${errors.join(' | ')}`);
 }
 
 // ─── POST /api/generate-mockups ───────────────────────────────────────────────
@@ -282,10 +324,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'logo_url is required' }, { status: 400 });
   }
 
-  if (!process.env.OPENROUTER_API_KEY) {
-    return NextResponse.json({ error: 'OPENROUTER_API_KEY env var not set' }, { status: 500 });
-  }
-
   if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
     return NextResponse.json({ error: 'Cloudinary env vars not configured' }, { status: 500 });
   }
@@ -299,27 +337,23 @@ export async function POST(req: NextRequest) {
 
     for (let i = 0; i < SCENES.length; i++) {
       const scene = SCENES[i];
-      console.log(`[mockup] scene ${i + 1}/${SCENES.length}: ${scene.scene}`);
+      console.log(`[mockup] processing scene ${i + 1}/${SCENES.length}: ${scene.scene}`);
 
       try {
         const result = await generateScene(
           scene, title, description, category, logoBase64, logoMime,
         );
         results.push(result);
-        console.log(`[mockup] ✓ ${i + 1}/${SCENES.length} done`);
       } catch (e) {
         console.error(`[mockup] scene skipped (${scene.scene}):`, e instanceof Error ? e.message : e);
       }
 
-      // Delay ringan antar scene — OpenRouter tidak punya per-project shared quota
-      if (i < SCENES.length - 1) {
-        await sleep(3_000);
-      }
+      if (i < SCENES.length - 1) await sleep(2_000);
     }
 
     if (results.length === 0) {
       return NextResponse.json(
-        { error: 'Semua scene gagal. Cek OPENROUTER_API_KEY dan saldo di openrouter.ai/credits.' },
+        { error: 'Semua scene gagal. Cek koneksi dan Cloudinary credentials.' },
         { status: 502 },
       );
     }
