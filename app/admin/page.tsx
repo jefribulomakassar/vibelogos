@@ -378,6 +378,12 @@ export default function AdminPage() {
     } finally { setSaving(false); }
   };
 
+  const handleDelete = async (id: number) => {
+    const res = await fetch(`/api/logos-data/${id}`, { method: 'DELETE', headers: getHeaders() });
+    if (res.ok) { showToast('🗑 Logo dihapus'); fetchLogos(); }
+    setDeleteId(null);
+  };
+
   const f = (field: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm(prev => ({ ...prev, [field]: e.target.value }));
 
@@ -588,6 +594,3 @@ export default function AdminPage() {
     </div>
   );
 }
-
-// ─── handleDelete dibutuhkan tapi hilang dari scope ───────────────────────────
-// Ini sudah ada di dalam AdminPage sebagai handleDelete, tidak perlu diekspos
