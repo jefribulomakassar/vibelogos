@@ -1,5 +1,10 @@
 import type { NextConfig } from "next";
+
 const nextConfig: NextConfig = {
+  // Vercel max function duration (seconds) — butuh karena generate 6 mockup bisa 45–60 detik
+  // Free plan Vercel max 60s, Pro plan max 300s
+  serverExternalPackages: [],
+
   images: {
     remotePatterns: [
       {
@@ -7,11 +12,8 @@ const nextConfig: NextConfig = {
         hostname: 'res.cloudinary.com',
         pathname: '/doxxsrxcb/**',
       },
-      {
-        protocol: 'https',
-        hostname: 'image.pollinations.ai',
-      },
     ],
   },
 };
+
 export default nextConfig;
