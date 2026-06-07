@@ -278,6 +278,11 @@ export async function POST(req: NextRequest) {
       } catch (e) {
         console.error(`[mockup] scene skipped (${scene.scene}):`, e);
       }
+
+      // Jeda 4s antar scene — safety net agar tidak flood 15 RPM free tier
+      if (i < SCENES.length - 1) {
+        await new Promise(r => setTimeout(r, 4_000));
+      }
     }
 
     if (results.length === 0) {
