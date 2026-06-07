@@ -36,13 +36,298 @@ async function uploadToCloudinary(
   });
 }
 
-// ─── Logo Upload Zone ─────────────────────────────────────────────────────────
+// ─── Upload image from external URL → Cloudinary (via server proxy) ──────────
+// LogoGround image URL di-fetch server-side dulu (hindari CORS), lalu upload ke Cloudinary
+async function uploadUrlToCloudinary(
+  imageUrl: string, folder: string, adminToken: string,
+): Promise<string> {
+  // Minta server proxy download + upload ke Cloudinary
+  const res = await fetch('/api/upload-cloudinary', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
+    body: JSON.stringify({ folder, external_url: imageUrl }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error || `Upload from URL failed (${res.status})`);
+  }
+  const data = await res.json();
+  if (data.secure_url) return data.secure_url as string;
+  throw new Error(data.error || 'Upload from URL failed');
+}
+
+// ─── LogoGround Importer ──────────────────────────────────────────────────────
+interface LogoGroundData {
+  title: string;
+  description: string;
+  keywords: string[];
+  price: number;
+  main_category: string;
+  secondary_categories: string[];
+  logo_url: string;
+  logoground_url: string;
+}
+
+interface LogoGroundImporterProps {
+  adminToken: string;
+  onImport: (data: LogoGroundData & { cloudinary_logo_url?: string }) => void;
+  defaultUrl?: string;
+}
+
+function LogoGroundImporter({ adminToken, onImport, defaultUrl = '' }: LogoGroundImporterProps) {
+  const [url, setUrl] = useState(defaultUrl);
+  const [loading, setLoading] = useState(false);
+  const [uploadingImg, setUploadingImg] = useState(false);
+  const [error, setError] = useState('');
+  const [preview, setPreview] = useState<LogoGroundData | null>(null);
+  const [imported, setImported] = useState(false);
+
+  const handleScrape = async () => {
+    const trimmed = url.trim();
+    if (!trimmed) { setError('Masukkan URL LogoGround terlebih dahulu'); return; }
+    if (!trimmed.includes('logoground.com/logo.php')) {
+      setError('URL harus dari logoground.com/logo.php?id=...');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    setPreview(null);
+    setImported(false);
+    try {
+      const res = await fetch(
+        `/api/scrape-logoground?url=${encodeURIComponent(trimmed)}`,
+        { headers: { 'x-admin-token': adminToken } },
+      );
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Scrape gagal');
+      setPreview(json.data as LogoGroundData);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Import semua data — logo tetap pakai URL LogoGround langsung dulu
+  const handleImportDirect = () => {
+    if (!preview) return;
+    onImport(preview);
+    setImported(true);
+  };
+
+  // Import + upload logo ke Cloudinary dulu
+  const handleImportWithUpload = async () => {
+    if (!preview) return;
+    setUploadingImg(true);
+    try {
+      const cloudUrl = await uploadUrlToCloudinary(preview.logo_url, 'vibelogos/logos', adminToken);
+      onImport({ ...preview, cloudinary_logo_url: cloudUrl });
+      setImported(true);
+    } catch (e: unknown) {
+      setError('Upload logo ke Cloudinary gagal: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setUploadingImg(false);
+    }
+  };
+
+  const isLoading = loading || uploadingImg;
+
+  return (
+    <div style={{
+      background: 'linear-gradient(135deg, rgba(200,245,66,0.05) 0%, rgba(200,245,66,0.02) 100%)',
+      border: '1px solid rgba(200,245,66,0.25)',
+      borderRadius: 14,
+      padding: 20,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 14,
+    }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{
+          width: 32, height: 32, borderRadius: 8,
+          background: 'rgba(200,245,66,0.15)',
+          border: '1px solid rgba(200,245,66,0.3)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 16, flexShrink: 0,
+        }}>⚡</div>
+        <div>
+          <div style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: 14, color: 'var(--accent)' }}>
+            Import dari LogoGround
+          </div>
+          <div style={{ fontSize: 11, color: '#666', marginTop: 1 }}>
+            Auto-isi title, deskripsi, keywords, kategori, harga & gambar logo
+          </div>
+        </div>
+      </div>
+
+      {/* URL Input */}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input
+          type="text"
+          placeholder="https://www.logoground.com/logo.php?id=580706"
+          value={url}
+          onChange={e => { setUrl(e.target.value); setError(''); setImported(false); }}
+          onKeyDown={e => e.key === 'Enter' && !isLoading && handleScrape()}
+          style={{
+            ...inputStyle, flex: 1, fontSize: 13,
+            borderColor: error ? 'rgba(255,68,68,0.5)' : 'rgba(200,245,66,0.2)',
+          }}
+          disabled={isLoading}
+        />
+        <button
+          onClick={handleScrape}
+          disabled={isLoading || !url.trim()}
+          style={{
+            padding: '10px 16px', borderRadius: 8, border: 'none',
+            background: isLoading || !url.trim() ? 'var(--bg3)' : 'rgba(200,245,66,0.15)',
+            color: isLoading || !url.trim() ? 'var(--muted)' : 'var(--accent)',
+            cursor: isLoading || !url.trim() ? 'not-allowed' : 'pointer',
+            fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: 13,
+            display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+            border: '1px solid rgba(200,245,66,0.2)',
+            transition: 'all 0.2s',
+          }}
+        >
+          {loading ? (
+            <>
+              <span style={{ display: 'inline-block', width: 13, height: 13, border: '2px solid rgba(200,245,66,0.3)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+              Mengambil…
+            </>
+          ) : '🔍 Ambil Data'}
+        </button>
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div style={{ background: 'rgba(255,68,68,0.08)', border: '1px solid rgba(255,68,68,0.25)', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#ff6b6b', display: 'flex', gap: 6 }}>
+          ⚠️ {error}
+        </div>
+      )}
+
+      {/* Success imported badge */}
+      {imported && !error && (
+        <div style={{ background: 'rgba(200,245,66,0.1)', border: '1px solid rgba(200,245,66,0.3)', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: 'var(--accent)', display: 'flex', gap: 6, alignItems: 'center' }}>
+          ✓ Data berhasil diimport ke form!
+        </div>
+      )}
+
+      {/* Preview Card */}
+      {preview && (
+        <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* Logo + Info */}
+          <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+            {preview.logo_url && (
+              <div style={{ width: 72, height: 72, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg)', flexShrink: 0, position: 'relative', overflow: 'hidden' }}>
+                {/* Gunakan <img> biasa karena domain eksternal */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={preview.logo_url}
+                  alt={preview.title}
+                  style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 8 }}
+                  crossOrigin="anonymous"
+                />
+              </div>
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
+                {preview.title}
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {preview.price > 0 && (
+                  <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>${preview.price}</span>
+                )}
+                {preview.main_category && (
+                  <span className="tag">{preview.main_category}</span>
+                )}
+                {preview.secondary_categories.map(c => (
+                  <span key={c} className="tag" style={{ opacity: 0.6 }}>{c}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Preview Fields */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {preview.description && (
+              <div>
+                <div style={{ ...labelStyle, marginBottom: 4 }}>Description preview</div>
+                <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.5, maxHeight: 60, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {preview.description}
+                </div>
+              </div>
+            )}
+            {preview.keywords.length > 0 && (
+              <div>
+                <div style={{ ...labelStyle, marginBottom: 4 }}>Keywords ({preview.keywords.length})</div>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {preview.keywords.slice(0, 12).map(k => (
+                    <span key={k} style={{ fontSize: 11, background: 'rgba(200,245,66,0.08)', border: '1px solid rgba(200,245,66,0.15)', borderRadius: 4, padding: '2px 6px', color: 'var(--muted)' }}>{k}</span>
+                  ))}
+                  {preview.keywords.length > 12 && (
+                    <span style={{ fontSize: 11, color: '#555' }}>+{preview.keywords.length - 12} lagi</span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Import Buttons */}
+          <div style={{ display: 'flex', gap: 8, paddingTop: 4, borderTop: '1px solid var(--border)' }}>
+            {/* Opsi 1: Import data saja, logo dari URL LogoGround langsung */}
+            <button
+              onClick={handleImportDirect}
+              disabled={isLoading}
+              style={{
+                flex: 1, padding: '10px 12px', borderRadius: 8, fontSize: 12, fontFamily: 'Syne, sans-serif', fontWeight: 600,
+                background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text)',
+                cursor: isLoading ? 'not-allowed' : 'pointer', transition: 'all 0.2s',
+              }}
+              title="Logo pakai URL LogoGround langsung (bisa berubah sewaktu-waktu)"
+            >
+              📋 Import Data + Logo URL
+            </button>
+
+            {/* Opsi 2: Import + upload logo ke Cloudinary */}
+            <button
+              onClick={handleImportWithUpload}
+              disabled={isLoading}
+              style={{
+                flex: 1, padding: '10px 12px', borderRadius: 8, fontSize: 12, fontFamily: 'Syne, sans-serif', fontWeight: 700,
+                background: 'rgba(200,245,66,0.1)', border: '1px solid rgba(200,245,66,0.3)', color: 'var(--accent)',
+                cursor: isLoading ? 'not-allowed' : 'pointer', transition: 'all 0.2s',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              }}
+              title="Upload logo ke Cloudinary dulu, lebih permanen"
+            >
+              {uploadingImg ? (
+                <>
+                  <span style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid rgba(200,245,66,0.3)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                  Uploading…
+                </>
+              ) : '☁️ Import + Upload ke Cloudinary'}
+            </button>
+          </div>
+
+          <p style={{ fontSize: 11, color: '#555', margin: 0 }}>
+            💡 <strong>"Import Data + Logo URL"</strong> = cepat, logo langsung dari LogoGround. <strong>"Upload ke Cloudinary"</strong> = lebih aman & permanen.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Logo Upload Zone (updated — dua mode: upload file ATAU load dari URL) ────
 function LogoUploadZone({ value, onChange, adminToken }: {
   value: string; onChange: (url: string) => void; adminToken: string;
 }) {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [dragging, setDragging] = useState(false);
+  const [mode, setMode] = useState<'upload' | 'url'>('upload');
+  const [externalUrl, setExternalUrl] = useState('');
+  const [loadingUrl, setLoadingUrl] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = useCallback(async (file: File) => {
@@ -55,43 +340,118 @@ function LogoUploadZone({ value, onChange, adminToken }: {
     } finally { setUploading(false); setProgress(0); }
   }, [adminToken, onChange]);
 
+  // Load gambar dari URL eksternal (termasuk LogoGround) → upload ke Cloudinary
+  const handleLoadFromUrl = async () => {
+    const trimmed = externalUrl.trim();
+    if (!trimmed) return;
+    setLoadingUrl(true);
+    try {
+      const cloudUrl = await uploadUrlToCloudinary(trimmed, 'vibelogos/logos', adminToken);
+      onChange(cloudUrl);
+      setExternalUrl('');
+    } catch (e: unknown) {
+      alert('Load dari URL gagal: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setLoadingUrl(false);
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <label style={labelStyle}>Logo Image *</label>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <label style={labelStyle}>Logo Image *</label>
+        {/* Mode toggle */}
+        <div style={{ display: 'flex', background: 'var(--bg3)', borderRadius: 6, padding: 2, gap: 2 }}>
+          {(['upload', 'url'] as const).map(m => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              style={{
+                padding: '3px 10px', borderRadius: 5, border: 'none', fontSize: 11, fontFamily: 'Syne, sans-serif', fontWeight: 600,
+                background: mode === m ? 'rgba(200,245,66,0.15)' : 'transparent',
+                color: mode === m ? 'var(--accent)' : '#555',
+                cursor: 'pointer', transition: 'all 0.15s',
+              }}
+            >
+              {m === 'upload' ? '📁 Upload File' : '🔗 Load dari URL'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Preview gambar terpilih */}
       {value && (
         <div style={{ position: 'relative', width: 100, height: 100 }}>
           <Image src={value} alt="logo" fill sizes="100px" style={{ objectFit: 'contain', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg3)', padding: 8 }} />
           <button onClick={() => onChange('')} style={{ position: 'absolute', top: -8, right: -8, width: 22, height: 22, borderRadius: '50%', background: '#ff4444', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
         </div>
       )}
-      <div
-        onClick={() => inputRef.current?.click()}
-        onDragOver={e => { e.preventDefault(); setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
-        style={{ border: `2px dashed ${dragging ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 10, padding: '20px 16px', textAlign: 'center', cursor: uploading ? 'default' : 'pointer', transition: 'all 0.2s', background: dragging ? 'rgba(200,245,66,0.04)' : 'transparent' }}
-      >
-        {uploading ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-            <div style={{ width: '100%', height: 4, background: 'var(--border)', borderRadius: 2 }}>
-              <div style={{ height: '100%', width: `${progress}%`, background: 'var(--accent)', borderRadius: 2, transition: 'width 0.2s' }} />
-            </div>
-            <span style={{ fontSize: 12, color: 'var(--muted)' }}>Uploading {progress}%…</span>
+
+      {/* Mode: Upload File */}
+      {mode === 'upload' && (
+        <>
+          <div
+            onClick={() => !uploading && inputRef.current?.click()}
+            onDragOver={e => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+            style={{ border: `2px dashed ${dragging ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 10, padding: '20px 16px', textAlign: 'center', cursor: uploading ? 'default' : 'pointer', transition: 'all 0.2s', background: dragging ? 'rgba(200,245,66,0.04)' : 'transparent' }}
+          >
+            {uploading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                <div style={{ width: '100%', height: 4, background: 'var(--border)', borderRadius: 2 }}>
+                  <div style={{ height: '100%', width: `${progress}%`, background: 'var(--accent)', borderRadius: 2, transition: 'width 0.2s' }} />
+                </div>
+                <span style={{ fontSize: 12, color: 'var(--muted)' }}>Uploading {progress}%…</span>
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 24, marginBottom: 6 }}>🖼️</div>
+                <p style={{ fontSize: 13, color: 'var(--muted)' }}>Drop logo here or <span style={{ color: 'var(--accent)' }}>click to browse</span></p>
+                <p style={{ fontSize: 11, color: '#555', marginTop: 4 }}>PNG, JPG, SVG, WEBP</p>
+              </>
+            )}
           </div>
-        ) : (
-          <>
-            <div style={{ fontSize: 24, marginBottom: 6 }}>🖼️</div>
-            <p style={{ fontSize: 13, color: 'var(--muted)' }}>Drop logo here or <span style={{ color: 'var(--accent)' }}>click to browse</span></p>
-            <p style={{ fontSize: 11, color: '#555', marginTop: 4 }}>PNG, JPG, SVG, WEBP</p>
-          </>
-        )}
-      </div>
-      <input ref={inputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
-      <div style={{ display: 'flex', gap: 6 }}>
-        <input type="text" placeholder="Or paste Cloudinary URL" style={{ ...inputStyle, flex: 1, fontSize: 12 }}
-          onKeyDown={e => { if (e.key === 'Enter') { const v = (e.target as HTMLInputElement).value.trim(); if (v) { onChange(v); (e.target as HTMLInputElement).value = ''; } } }} />
-        <span style={{ fontSize: 11, color: '#555', alignSelf: 'center' }}>Enter ↵</span>
-      </div>
+          <input ref={inputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+        </>
+      )}
+
+      {/* Mode: Load dari URL */}
+      {mode === 'url' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              type="text"
+              placeholder="https://www.logoground.com/uploads10/... atau URL gambar lain"
+              value={externalUrl}
+              onChange={e => setExternalUrl(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !loadingUrl && handleLoadFromUrl()}
+              style={{ ...inputStyle, flex: 1, fontSize: 12, borderColor: 'rgba(200,245,66,0.2)' }}
+              disabled={loadingUrl}
+            />
+            <button
+              onClick={handleLoadFromUrl}
+              disabled={loadingUrl || !externalUrl.trim()}
+              style={{
+                padding: '10px 14px', borderRadius: 8, fontSize: 12, fontFamily: 'Syne, sans-serif', fontWeight: 700, flexShrink: 0,
+                background: loadingUrl || !externalUrl.trim() ? 'var(--bg3)' : 'rgba(200,245,66,0.1)',
+                border: '1px solid rgba(200,245,66,0.2)',
+                color: loadingUrl || !externalUrl.trim() ? 'var(--muted)' : 'var(--accent)',
+                cursor: loadingUrl || !externalUrl.trim() ? 'not-allowed' : 'pointer',
+                display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s',
+              }}
+            >
+              {loadingUrl ? (
+                <span style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid rgba(200,245,66,0.3)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+              ) : '⬇️'}
+              {loadingUrl ? 'Loading…' : 'Load'}
+            </button>
+          </div>
+          <p style={{ fontSize: 11, color: '#555', margin: 0 }}>
+            Gambar akan didownload server-side lalu diupload ke Cloudinary (aman dari CORS)
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -99,7 +459,6 @@ function LogoUploadZone({ value, onChange, adminToken }: {
 // ─── AI Mockup Generator ──────────────────────────────────────────────────────
 interface MockupResult { scene: string; label: string; url: string; }
 
-// Step messages — 3 scene, estimasi ~1–2 menit total
 const STEP_MESSAGES = [
   '🤖 Mengirim logo ke Gemini AI…',
   '👕 Scene 1/3 — T-Shirt mockup…',
@@ -125,7 +484,6 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-advance step messages setiap ~12s (sedikit lebih dari delay antar scene)
   const startStepTimer = () => {
     setStepIdx(0);
     stepTimerRef.current = setInterval(() => {
@@ -179,7 +537,6 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
         <span style={{ fontSize: 11, color: '#555' }}>Powered by Gemini 2.0 Flash</span>
       </div>
 
-      {/* Estimasi waktu warning */}
       {!generating && logoUrl && (
         <div style={{ background: 'rgba(200,245,66,0.06)', border: '1px solid rgba(200,245,66,0.15)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
           ⏱️ Estimasi ~1–2 menit untuk 3 scene mockup
@@ -296,7 +653,6 @@ export default function AdminPage() {
     setLoading(false);
   }, []);
 
-  // ── Auto-login dari localStorage ──────────────────────────────────────────
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) { setChecking(false); return; }
@@ -350,6 +706,25 @@ export default function AdminPage() {
     setShowForm(true);
   };
 
+  // ── Handle import dari LogoGround ─────────────────────────────────────────
+  const handleLogoGroundImport = (data: LogoGroundData & { cloudinary_logo_url?: string }) => {
+    setForm(prev => ({
+      ...prev,
+      title: data.title || prev.title,
+      description: data.description || prev.description,
+      keywords: data.keywords.length > 0 ? data.keywords.join(', ') : prev.keywords,
+      price: data.price > 0 ? String(data.price) : prev.price,
+      main_category: data.main_category || prev.main_category,
+      secondary_categories: data.secondary_categories.length > 0
+        ? data.secondary_categories.join(', ')
+        : prev.secondary_categories,
+      // Gunakan Cloudinary URL jika ada, fallback ke URL LogoGround
+      logo_url: data.cloudinary_logo_url || data.logo_url || prev.logo_url,
+      logoground_url: data.logoground_url || prev.logoground_url,
+    }));
+    showToast('✓ Data LogoGround diimport!');
+  };
+
   const handleSave = async () => {
     if (!form.title.trim()) return alert('Title wajib diisi!');
     if (!form.logo_url.trim()) return alert('Logo URL wajib diisi!');
@@ -384,7 +759,6 @@ export default function AdminPage() {
   const f = (field: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm(prev => ({ ...prev, [field]: e.target.value }));
 
-  // ── Checking saved session ────────────────────────────────────────────────
   if (checking) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
       <span style={{ display: 'inline-block', width: 32, height: 32, border: '3px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
@@ -392,7 +766,6 @@ export default function AdminPage() {
     </div>
   );
 
-  // ── Login ─────────────────────────────────────────────────────────────────
   if (!authed) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
@@ -410,7 +783,6 @@ export default function AdminPage() {
     </div>
   );
 
-  // ── Dashboard ────────────────────────────────────────────────────────────
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
@@ -509,6 +881,20 @@ export default function AdminPage() {
 
             <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
 
+              {/* ── LogoGround Importer — tampil di atas form ── */}
+              <LogoGroundImporter
+                adminToken={token}
+                onImport={handleLogoGroundImport}
+                defaultUrl={form.logoground_url}
+              />
+
+              {/* Divider */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                <span style={{ fontSize: 11, color: '#555', flexShrink: 0 }}>atau isi manual</span>
+                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+              </div>
+
               {/* Title + Price */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px', gap: 16 }}>
                 <div>
@@ -545,14 +931,13 @@ export default function AdminPage() {
                 <input type="text" placeholder="modern, minimal, tech (comma-separated)" value={form.keywords} onChange={f('keywords')} style={{ ...inputStyle, marginTop: 6 }} />
               </div>
 
-              {/* Logo Upload */}
+              {/* Logo Upload (dua mode: upload file / load dari URL) */}
               <LogoUploadZone
                 value={form.logo_url}
                 onChange={url => setForm(p => ({ ...p, logo_url: url }))}
                 adminToken={token}
               />
 
-              {/* Divider */}
               <div style={{ borderTop: '1px solid var(--border)', paddingTop: 4 }} />
 
               {/* AI Mockup Generator */}
