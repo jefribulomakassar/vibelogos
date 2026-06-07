@@ -18,11 +18,12 @@ interface MockupResult {
 }
 
 // ─── Gemini Models — rotasi jika rate-limit (semua free tier) ─────────────────
-// Free tier: 1500 req/day (Flash), 50 req/day (Pro)
+// Updated June 2026 — model lama (2.0-flash-*-image-generation) sudah 404
 const GEMINI_MODELS = [
-  'gemini-2.0-flash-preview-image-generation', // primary — paling cepat
-  'gemini-2.0-flash-exp-image-generation',      // fallback 1
-  'gemini-1.5-flash-latest',                    // fallback 2
+  'gemini-3.1-flash-image',         // primary — terbaru (Nano Banana 2)
+  'gemini-3.1-flash-image-preview', // fallback 1
+  'gemini-2.5-flash',               // fallback 2 — multimodal image output
+  'gemini-2.5-flash-lite',          // fallback 3 — lebih ringan
 ];
 
 // ─── 6 Scene Definitions ──────────────────────────────────────────────────────
