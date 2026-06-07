@@ -15,15 +15,16 @@ interface MockupResult {
   url: string;
 }
 
-// ─── Model yang BENAR untuk image generation + image input ───────────────────
-// gemini-2.0-flash-exp-image-generation = satu-satunya model Gemini yang:
-//   1. Menerima IMAGE sebagai input (logo kamu)
-//   2. Menghasilkan IMAGE sebagai output (mockup)
-// Endpoint: generateContent (sama seperti biasa, bukan /predict)
+// ─── Model untuk image generation + image input ──────────────────────────────
+// gemini-2.5-flash-image        = GA sejak Okt 2025 (nano-banana), RECOMMENDED
+// gemini-2.5-flash-image-preview = alias preview (fallback kalau GA down)
+// gemini-2.0-flash-preview-image-generation = fallback lama (masih aktif per mid-2025)
 // JANGAN pakai: imagen-3.0 (tidak support image input)
-// JANGAN pakai: gemini-2.5-flash/lite (tidak support image output)
+// JANGAN pakai: gemini-2.5-flash / gemini-2.0-flash-exp-image-generation (sudah 404)
 const GEMINI_IMAGE_MODELS = [
-  'gemini-2.0-flash-exp-image-generation', // primary — satu-satunya yang support i2i
+  'gemini-2.5-flash-image',                    // primary — GA, nano-banana
+  'gemini-2.5-flash-image-preview',             // fallback 1 — preview alias
+  'gemini-2.0-flash-preview-image-generation',  // fallback 2 — versi lama yg masih jalan
 ];
 
 // ─── Multi API Key Rotation ───────────────────────────────────────────────────
