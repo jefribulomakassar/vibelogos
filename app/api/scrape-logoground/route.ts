@@ -122,7 +122,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const res = await fetch(
-      `https://app.scrapingbee.com/api/v1/?api_key=${process.env.SCRAPINGBEE_API_KEY}&url=${encodeURIComponent(`https://www.logoground.com/logo.php?id=${logoId}`)}&render_js=false`,
+      `https://app.scrapingbee.com/api/v1/?api_key=${process.env.SCRAPINGBEE_API_KEY}&url=${encodeURIComponent(`https://www.logoground.com/logo.php?id=${logoId}`)}&render_js=true`,
       {
         signal: AbortSignal.timeout(25_000),
         cache: 'no-store',
