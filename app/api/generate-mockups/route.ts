@@ -3,7 +3,7 @@ import crypto from 'crypto';
 
 // Vercel: perpanjang timeout route ini hingga 60 detik (free plan max)
 // Upgrade ke Vercel Pro → ganti jadi 300
-export const maxDuration = 60;
+export const maxDuration = 300; // Vercel Pro: 300s, Free: max 60s (upgrade recommended)
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 function checkAdmin(req: NextRequest) {
@@ -17,14 +17,25 @@ interface MockupResult {
   url: string;
 }
 
-// ─── Gemini Models — rotasi jika rate-limit (semua free tier) ─────────────────
-// Updated June 2026 — model lama (2.0-flash-*-image-generation) sudah 404
-const GEMINI_MODELS = [
-  'gemini-3.1-flash-image',         // primary — terbaru (Nano Banana 2)
-  'gemini-3.1-flash-image-preview', // fallback 1
-  'gemini-2.5-flash',               // fallback 2 — multimodal image output
-  'gemini-2.5-flash-lite',          // fallback 3 — lebih ringan
+// ─── Gemini Image Models (hanya yang support image output) ──────────────────────
+// gemini-2.5-flash & lite TIDAK support image output (text only) — jangan dipakai
+// Rate limit free tier: 15 req/menit per key → pakai multi-key rotation
+const GEMINI_IMAGE_MODELS = [
+  'gemini-3.1-flash-image',         // primary — Nano Banana 2
+  'gemini-3.1-flash-image-preview', // fallback
 ];
+
+// ─── Multi API Key Rotation ───────────────────────────────────────────────────
+// Set di Vercel env: GEMINI_API_KEY (wajib), GEMINI_API_KEY_2, GEMINI_API_KEY_3, dst
+// Makin banyak key → makin kecil kemungkinan 429
+function getApiKeys(): string[] {
+  const keys: string[] = [];
+  if (process.env.GEMINI_API_KEY)   keys.push(process.env.GEMINI_API_KEY);
+  if (process.env.GEMINI_API_KEY_2) keys.push(process.env.GEMINI_API_KEY_2);
+  if (process.env.GEMINI_API_KEY_3) keys.push(process.env.GEMINI_API_KEY_3);
+  if (process.env.GEMINI_API_KEY_4) keys.push(process.env.GEMINI_API_KEY_4);
+  return keys;
+}
 
 // ─── 6 Scene Definitions ──────────────────────────────────────────────────────
 const SCENES = [
@@ -168,7 +179,9 @@ async function uploadBufferToCloudinary(buffer: Buffer): Promise<string> {
   return result.secure_url as string;
 }
 
-// ─── Generate 1 scene dengan Gemini model rotation ───────────────────────────
+// ─── Generate 1 scene dengan assigned key + model fallback ───────────────────
+// assignedKey = key yang dialokasikan untuk scene ini (round-robin dari POST)
+// Kalau assignedKey 429 → fallback ke key lain → fallback model lain
 async function generateScene(
   sceneConfig: (typeof SCENES)[0],
   title: string,
@@ -176,27 +189,41 @@ async function generateScene(
   category: string,
   logoBase64: string,
   logoMime: string,
-  apiKey: string,
+  apiKeys: string[],
+  assignedKeyIndex: number, // index key utama untuk scene ini
 ): Promise<MockupResult> {
   const prompt = sceneConfig.buildPrompt(title, description, category);
   const errors: string[] = [];
 
-  for (const model of GEMINI_MODELS) {
-    try {
-      console.log(`[mockup] scene=${sceneConfig.scene} trying model=${model}`);
-      const imgBuffer = await callGemini(model, prompt, logoBase64, logoMime, apiKey);
-      const cloudUrl  = await uploadBufferToCloudinary(imgBuffer);
-      console.log(`[mockup] scene=${sceneConfig.scene} ✓ model=${model}`);
-      return { scene: sceneConfig.scene, label: sceneConfig.label, url: cloudUrl };
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.warn(`[mockup] scene=${sceneConfig.scene} model=${model} failed: ${msg}`);
-      errors.push(`${model}: ${msg}`);
-      await new Promise(r => setTimeout(r, 1_000));
+  // Susun urutan key: mulai dari assignedKey, lalu key lain sebagai fallback
+  const keyOrder = [
+    assignedKeyIndex,
+    ...apiKeys.map((_, i) => i).filter(i => i !== assignedKeyIndex),
+  ];
+
+  for (const keyIdx of keyOrder) {
+    const key = apiKeys[keyIdx];
+    const keyLabel = `key_${keyIdx + 1}`;
+
+    for (const model of GEMINI_IMAGE_MODELS) {
+      try {
+        console.log(`[mockup] scene=${sceneConfig.scene} trying ${keyLabel}+${model}`);
+        const imgBuffer = await callGemini(model, prompt, logoBase64, logoMime, key);
+        const cloudUrl  = await uploadBufferToCloudinary(imgBuffer);
+        console.log(`[mockup] scene=${sceneConfig.scene} ✓ ${keyLabel}+${model}`);
+        return { scene: sceneConfig.scene, label: sceneConfig.label, url: cloudUrl };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const is429 = msg.includes('429');
+        console.warn(`[mockup] ${keyLabel}+${model} failed (${is429 ? 'RATE LIMIT' : 'ERROR'}): ${msg.slice(0, 120)}`);
+        errors.push(`${keyLabel}+${model}: ${msg.slice(0, 80)}`);
+        // Kalau 429, langsung skip ke key berikutnya (jangan retry model lain di key yang sama)
+        if (is429) break;
+      }
     }
   }
 
-  throw new Error(`All Gemini models failed for "${sceneConfig.scene}": ${errors.join(' | ')}`);
+  throw new Error(`All keys/models failed for "${sceneConfig.scene}": ${errors.join(' | ')}`);
 }
 
 // ─── POST /api/generate-mockups ───────────────────────────────────────────────
@@ -216,10 +243,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'logo_url is required' }, { status: 400 });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  const apiKeys = getApiKeys();
+  if (apiKeys.length === 0) {
     return NextResponse.json({ error: 'GEMINI_API_KEY env var not set' }, { status: 500 });
   }
+  console.log(`[mockup] using ${apiKeys.length} API key(s)`);
 
   if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
     return NextResponse.json({ error: 'Cloudinary env vars not configured' }, { status: 500 });
@@ -230,19 +258,25 @@ export async function POST(req: NextRequest) {
     const { base64: logoBase64, mimeType: logoMime } = await fetchLogoAsBase64(logo_url);
     console.log(`[mockup] logo fetched, mime=${logoMime}, size=${logoBase64.length} chars`);
 
-    // 2 batch @ 3 paralel — jaga agar tidak flood rate limit
+    // Sequential + round-robin key assignment:
+    // scene[0]→key[0], scene[1]→key[1], scene[2]→key[2], scene[3]→key[0], dst
+    // Tiap key dapat jeda alami ~N×10s sebelum dipanggil lagi → hindari 429
+    // Kalau key yang ditugaskan 429 → otomatis fallback ke key lain
     const results: MockupResult[] = [];
-    const batches = [SCENES.slice(0, 3), SCENES.slice(3, 6)];
 
-    for (const batch of batches) {
-      const batchResults = await Promise.allSettled(
-        batch.map(scene =>
-          generateScene(scene, title, description, category, logoBase64, logoMime, apiKey)
-        ),
-      );
-      for (const r of batchResults) {
-        if (r.status === 'fulfilled') results.push(r.value);
-        else console.error('[mockup] scene skipped:', r.reason);
+    for (let i = 0; i < SCENES.length; i++) {
+      const scene = SCENES[i];
+      const assignedKeyIndex = i % apiKeys.length; // round-robin
+      console.log(`[mockup] scene ${i + 1}/${SCENES.length} (${scene.scene}) → key_${assignedKeyIndex + 1}`);
+
+      try {
+        const result = await generateScene(
+          scene, title, description, category, logoBase64, logoMime, apiKeys, assignedKeyIndex,
+        );
+        results.push(result);
+        console.log(`[mockup] ✓ ${i + 1}/${SCENES.length} done`);
+      } catch (e) {
+        console.error(`[mockup] scene skipped (${scene.scene}):`, e);
       }
     }
 
