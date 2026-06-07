@@ -244,7 +244,7 @@ export async function POST(req: NextRequest) {
   if (!logo_url) {
     return NextResponse.json({ error: 'logo_url is required' }, { status: 400 });
   }
-
+  
   if (!process.env.GEMINI_API_KEY) {
     return NextResponse.json({ error: 'GEMINI_API_KEY env var not set' }, { status: 500 });
   }
