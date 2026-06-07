@@ -108,7 +108,7 @@ async function uploadBufferToCloudinary(buffer: Buffer): Promise<string> {
     .digest('hex');
 
   // Convert buffer → Blob for FormData
-  const blob = new Blob([buffer], { type: 'image/jpeg' });
+  const blob = new Blob([new Uint8Array(buffer)], { type: 'image/jpeg' });
   const fd = new FormData();
   fd.append('file', blob, 'mockup.jpg');
   fd.append('api_key', apiKey);
