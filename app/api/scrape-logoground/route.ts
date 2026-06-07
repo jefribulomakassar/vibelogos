@@ -52,14 +52,11 @@ function parseHTML(html: string, logogroundUrl: string): LogoGroundData {
   const logo_url = ogImageMatch ? ogImageMatch[1].trim() : '';
 
   // ── Description ────────────────────────────────────────────────────────────
-  // Prioritas 1: ambil dari section "DESIGNER'S DESCRIPTION" di body
   let description = '';
   const descSectionMatch = html.match(/DESIGNER'S DESCRIPTION\s*([\s\S]*?)(?:TAGS|<\/|$)/i);
   if (descSectionMatch) {
     description = cleanText(descSectionMatch[1].replace(/<[^>]+>/g, ' '));
   }
-
-  // Fallback: ambil dari og:description / meta description, potong setelah ";"
   if (!description) {
     const ogDescMatch =
       html.match(/<meta[^>]+(?:name=["']description["']|property=["']og:description["'])[^>]+content=["']([^"']+)["']/i) ||
@@ -117,6 +114,62 @@ function parseHTML(html: string, logogroundUrl: string): LogoGroundData {
   };
 }
 
+// ── Ambil HTML via Anthropic web_fetch server tool ────────────────────────────
+async function fetchViaClaudeWebFetch(url: string): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY tidak ditemukan di env');
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'web-fetch-2025-09-10',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001', // model paling murah, cukup untuk fetch
+      max_tokens: 8000,
+      tools: [
+        {
+          type: 'web_fetch_20250910',
+          name: 'web_fetch',
+          max_uses: 1,
+        },
+      ],
+      messages: [
+        {
+          role: 'user',
+          content: `Fetch the raw HTML content of this URL and return ONLY the full HTML, nothing else: ${url}`,
+        },
+      ],
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Anthropic API error ${response.status}: ${err}`);
+  }
+
+  const data = await response.json();
+
+  // Kumpulkan semua text dari content blocks (termasuk web_fetch_tool_result)
+  let html = '';
+  for (const block of data.content ?? []) {
+    if (block.type === 'text' && block.text) {
+      html += block.text;
+    } else if (block.type === 'web_fetch_tool_result') {
+      // Hasil fetch ada di block.content.source.data
+      const fetched = block.content?.source?.data ?? block.content?.data ?? '';
+      if (fetched) html += fetched;
+    }
+  }
+
+  if (!html) throw new Error('web_fetch tidak mengembalikan konten HTML');
+  return html;
+}
+
 export async function GET(req: NextRequest) {
   if (!checkAdmin(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -142,32 +195,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // ── Fetch langsung tanpa proxy — LogoGround tidak butuh Bright Data ──────
-    // Cukup kirim headers yang mirip browser biasa
-    const res = await fetch(`https://www.logoground.com/logo.php?id=${logoId}`, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-        Accept:
-          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        Referer: 'https://www.logoground.com/',
-        'Cache-Control': 'no-cache',
-        Pragma: 'no-cache',
-      },
-      signal: AbortSignal.timeout(25_000),
-      cache: 'no-store',
-    });
+    const targetUrl = `https://www.logoground.com/logo.php?id=${logoId}`;
 
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: `LogoGround returned ${res.status}. Cek ID logo.` },
-        { status: 502 },
-      );
-    }
-
-    const html = await res.text();
+    // Gunakan Anthropic web_fetch — sama persis seperti cara Claude.ai fetch halaman
+    const html = await fetchViaClaudeWebFetch(targetUrl);
 
     if (html.includes('Logo not found') || html.includes('does not exist')) {
       return NextResponse.json({ error: 'Logo tidak ditemukan di LogoGround' }, { status: 404 });
@@ -186,10 +217,7 @@ export async function GET(req: NextRequest) {
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('timeout') || msg.includes('TimeoutError')) {
-      return NextResponse.json(
-        { error: 'Timeout mengambil halaman LogoGround' },
-        { status: 504 },
-      );
+      return NextResponse.json({ error: 'Timeout mengambil halaman LogoGround' }, { status: 504 });
     }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
