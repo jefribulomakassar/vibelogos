@@ -34,36 +34,44 @@ function cleanText(text: string): string {
 }
 
 function parseHTML(html: string, logogroundUrl: string): LogoGroundData {
-  const ogTitleMatch = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i)
-    || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i);
+  // ── Title ──────────────────────────────────────────────────────────────────
+  const ogTitleMatch =
+    html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) ||
+    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i);
   const titleTagMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
   const title = ogTitleMatch
     ? cleanText(ogTitleMatch[1])
     : titleTagMatch
-      ? cleanText(titleTagMatch[1].replace(/\s*[-|].*$/, ''))
-      : '';
+    ? cleanText(titleTagMatch[1].replace(/\s*[-|].*$/, ''))
+    : '';
 
-  const ogImageMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
-    || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+  // ── Logo Image URL ─────────────────────────────────────────────────────────
+  const ogImageMatch =
+    html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
+    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
   const logo_url = ogImageMatch ? ogImageMatch[1].trim() : '';
 
+  // ── Description ────────────────────────────────────────────────────────────
+  // Prioritas 1: ambil dari section "DESIGNER'S DESCRIPTION" di body
   let description = '';
   const descSectionMatch = html.match(/DESIGNER'S DESCRIPTION\s*([\s\S]*?)(?:TAGS|<\/|$)/i);
   if (descSectionMatch) {
     description = cleanText(descSectionMatch[1].replace(/<[^>]+>/g, ' '));
   }
+
+  // Fallback: ambil dari og:description / meta description, potong setelah ";"
   if (!description) {
-    const ogDescMatch = html.match(/<meta[^>]+(?:name=["']description["']|property=["']og:description["'])[^>]+content=["']([^"']+)["']/i)
-      || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:name=["']description["']|property=["']og:description["'])/i);
+    const ogDescMatch =
+      html.match(/<meta[^>]+(?:name=["']description["']|property=["']og:description["'])[^>]+content=["']([^"']+)["']/i) ||
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:name=["']description["']|property=["']og:description["'])/i);
     if (ogDescMatch) {
       const raw = ogDescMatch[1];
-      const semiColonIdx = raw.indexOf(';');
-      description = semiColonIdx !== -1
-        ? cleanText(raw.slice(semiColonIdx + 1))
-        : cleanText(raw);
+      const semiIdx = raw.indexOf(';');
+      description = semiIdx !== -1 ? cleanText(raw.slice(semiIdx + 1)) : cleanText(raw);
     }
   }
 
+  // ── Keywords/Tags ──────────────────────────────────────────────────────────
   let keywords: string[] = [];
   const tagsSectionMatch = html.match(/TAGS\s*([\s\S]*?)(?:<\/div>|<div|Similar logos|RELATED|$)/i);
   if (tagsSectionMatch) {
@@ -71,32 +79,42 @@ function parseHTML(html: string, logogroundUrl: string): LogoGroundData {
     keywords = tagsRaw
       .replace(/\.\.\./g, '')
       .split(/\s+/)
-      .map(k => k.trim().toLowerCase())
-      .filter(k => k.length > 1 && k.length < 30);
+      .map((k) => k.trim().toLowerCase())
+      .filter((k) => k.length > 1 && k.length < 30);
   }
 
+  // ── Price ──────────────────────────────────────────────────────────────────
   const priceMatch = html.match(/>(\$[\d,]+)<\/(?:div|span|p|h[1-6]|strong)/);
   const price = priceMatch ? parsePrice(priceMatch[1]) : 0;
 
+  // ── Main Category ──────────────────────────────────────────────────────────
   let main_category = '';
   const mainCatMatch = html.match(/Logo Category[\s\S]*?<a[^>]*>([^<]+Logos)<\/a>/i);
   if (mainCatMatch) {
     main_category = cleanText(mainCatMatch[1].replace(/\s*Logos\s*$/i, ''));
   }
 
+  // ── Secondary Categories ───────────────────────────────────────────────────
   const secondary_categories: string[] = [];
   const subCatSection = html.match(/Sub-Categories([\s\S]*?)(?:Published|<\/ul>|<\/td>)/i);
   if (subCatSection) {
     const subMatches = subCatSection[1].matchAll(/<a[^>]*>([^<]+Logos)<\/a>/gi);
     for (const m of subMatches) {
       const cat = cleanText(m[1].replace(/\s*Logos\s*$/i, ''));
-      if (cat && cat !== main_category) {
-        secondary_categories.push(cat);
-      }
+      if (cat && cat !== main_category) secondary_categories.push(cat);
     }
   }
 
-  return { title, description, keywords, price, main_category, secondary_categories, logo_url, logoground_url: logogroundUrl };
+  return {
+    title,
+    description,
+    keywords,
+    price,
+    main_category,
+    secondary_categories,
+    logo_url,
+    logoground_url: logogroundUrl,
+  };
 }
 
 export async function GET(req: NextRequest) {
@@ -112,7 +130,10 @@ export async function GET(req: NextRequest) {
   }
 
   if (!logogroundUrl.includes('logoground.com/logo.php')) {
-    return NextResponse.json({ error: 'URL harus dari logoground.com/logo.php?id=...' }, { status: 400 });
+    return NextResponse.json(
+      { error: 'URL harus dari logoground.com/logo.php?id=...' },
+      { status: 400 },
+    );
   }
 
   const logoId = extractLogoId(logogroundUrl);
@@ -121,14 +142,20 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    // ── Fetch langsung tanpa proxy — LogoGround tidak butuh Bright Data ──────
+    // Cukup kirim headers yang mirip browser biasa
     const res = await fetch(`https://www.logoground.com/logo.php?id=${logoId}`, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        Accept:
+          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        Referer: 'https://www.logoground.com/',
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
       },
-      // @ts-ignore
-      agent: new (await import('https-proxy-agent')).HttpsProxyAgent(
-        `http://${process.env.BRIGHTDATA_USER}:${process.env.BRIGHTDATA_PASS}@brd.superproxy.io:22225`
-      ),
       signal: AbortSignal.timeout(25_000),
       cache: 'no-store',
     });
@@ -156,11 +183,13 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json({ success: true, data });
-
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('timeout') || msg.includes('TimeoutError')) {
-      return NextResponse.json({ error: 'Timeout mengambil halaman LogoGround' }, { status: 504 });
+      return NextResponse.json(
+        { error: 'Timeout mengambil halaman LogoGround' },
+        { status: 504 },
+      );
     }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
