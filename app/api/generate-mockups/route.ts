@@ -14,100 +14,67 @@ interface MockupResult {
   url: string;
 }
 
-// ─── Model list — urutan prioritas ───────────────────────────────────────────
-const OR_MODELS = [
-  'google/gemini-2.0-flash-exp:free',          // image-in, text-out (reliable free)
-  'google/gemini-2.5-flash-preview:free',       // fallback
-  'google/gemini-2.5-flash-image:free',         // image-in + image-out (kalau tersedia)
-  'google/gemini-3.1-flash-image-preview:free', // newest, mungkin belum stabil
-];
-
 const SCENES = [
   {
     scene: 'tshirt',
     label: '👕 T-Shirt',
-    pollinationsPrompt: (title: string) =>
-      `photorealistic mockup of "${title}" logo printed centered on chest of clean white t-shirt, flat lay, studio lighting, minimal white background, 4K commercial photography`,
     buildPrompt: (title: string, desc: string, cat: string) =>
-      `You are given the logo image of "${title}", a ${cat} brand.${desc ? ` Brand: ${desc}.` : ''}
-
-Using this exact logo (reproduce faithfully — same colors, shapes, typography), generate a photorealistic mockup of the logo printed centered on the chest of a clean white t-shirt. Flat lay, smooth light surface, studio lighting, minimal white/grey background, 4K commercial photography quality.`,
+      `Using this exact logo of "${title}" (a ${cat} brand${desc ? `, ${desc}` : ''}), reproduce the logo faithfully with same colors, shapes, and typography on a photorealistic mockup: logo printed centered on chest of a clean white t-shirt. Flat lay, studio lighting, minimal white/grey background, 4K commercial photography quality.`,
   },
   {
     scene: 'business_card',
     label: '💳 Business Card',
-    pollinationsPrompt: (title: string) =>
-      `photorealistic business card mockup with "${title}" logo on front of premium matte white card, marble surface, elegant top-down angle, studio photography`,
     buildPrompt: (title: string, desc: string, cat: string) =>
-      `You are given the logo image of "${title}", a ${cat} brand.${desc ? ` Brand: ${desc}.` : ''}
-
-Using this exact logo (reproduce faithfully — same colors, shapes, typography), generate a photorealistic business card mockup with the logo on the front of a premium matte white card. Marble or dark surface, slight shadow, elegant top-down angle, studio photography quality.`,
+      `Using this exact logo of "${title}" (a ${cat} brand${desc ? `, ${desc}` : ''}), reproduce the logo faithfully with same colors, shapes, and typography on a photorealistic mockup: logo on front of a premium matte white business card. Marble surface, slight shadow, elegant top-down angle, studio photography quality.`,
   },
   {
     scene: 'mug',
     label: '☕ Mug',
-    pollinationsPrompt: (title: string) =>
-      `photorealistic mockup of "${title}" logo on clean white ceramic coffee mug, wooden table, warm cafe lighting, professional photography, logo centered`,
     buildPrompt: (title: string, desc: string, cat: string) =>
-      `You are given the logo image of "${title}", a ${cat} brand.${desc ? ` Brand: ${desc}.` : ''}
-
-Using this exact logo (reproduce faithfully — same colors, shapes, typography), generate a photorealistic mockup of the logo on a clean white ceramic coffee mug. Wooden table, warm cafe lighting, professional photography, logo clearly visible and centered.`,
+      `Using this exact logo of "${title}" (a ${cat} brand${desc ? `, ${desc}` : ''}), reproduce the logo faithfully with same colors, shapes, and typography on a photorealistic mockup: logo on a clean white ceramic coffee mug. Wooden table, warm cafe lighting, professional photography, logo clearly visible and centered.`,
   },
 ];
 
-// ─── Pollinations AI fallback (no key needed) ─────────────────────────────────
-async function generateViaPollinations(prompt: string): Promise<Buffer> {
-  const encoded = encodeURIComponent(prompt);
-  const url = `https://image.pollinations.ai/prompt/${encoded}?width=1024&height=1024&nologo=true&enhance=true`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
-  if (!res.ok) throw new Error(`Pollinations error ${res.status}`);
-  return Buffer.from(await res.arrayBuffer());
-}
-
-// ─── Call OpenRouter ──────────────────────────────────────────────────────────
-async function callOpenRouter(
-  model: string,
+// ─── Google AI SDK — gemini-2.5-flash-image (free 500 req/day) ────────────────
+// Docs: https://ai.google.dev/gemini-api/docs/image-generation
+// Model: gemini-2.5-flash-image (Nano Banana) — image-in + image-out
+async function callGeminiImageAPI(
   prompt: string,
   logoBase64: string,
   logoMime: string,
 ): Promise<Buffer> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new Error('OPENROUTER_API_KEY not set');
+  const apiKey = process.env.GOOGLE_AI_API_KEY;
+  if (!apiKey) throw new Error('GOOGLE_AI_API_KEY not set');
 
-  // Tentukan apakah model ini support image output
-  const isImageOutModel =
-    model.includes('image') && !model.includes('gemini-2.0-flash-exp');
+  // Gunakan generateContent endpoint dengan responseModalities: ["IMAGE", "TEXT"]
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${apiKey}`;
 
-  const body: Record<string, unknown> = {
-    model,
-    messages: [
+  const body = {
+    contents: [
       {
-        role: 'user',
-        content: [
+        parts: [
+          // Logo image sebagai input
           {
-            type: 'image_url',
-            image_url: { url: `data:${logoMime};base64,${logoBase64}` },
+            inline_data: {
+              mime_type: logoMime,
+              data: logoBase64,
+            },
           },
-          { type: 'text', text: prompt },
+          // Text prompt
+          {
+            text: prompt,
+          },
         ],
       },
     ],
-    max_tokens: 1024,
+    generationConfig: {
+      responseModalities: ['IMAGE', 'TEXT'],
+    },
   };
 
-  // modalities hanya untuk model image-out
-  if (isImageOutModel) {
-    body.modalities = ['image', 'text'];
-  }
-
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-      'HTTP-Referer': 'https://vibelogos.vercel.app',
-      'X-Title': 'VibeLogo Admin',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(90_000),
   });
@@ -115,69 +82,42 @@ async function callOpenRouter(
   const responseText = await res.text();
 
   if (!res.ok) {
-    throw new Error(`OpenRouter ${model} ${res.status}: ${responseText.slice(0, 400)}`);
+    throw new Error(`Gemini API error ${res.status}: ${responseText.slice(0, 400)}`);
   }
 
   let data: unknown;
   try {
     data = JSON.parse(responseText);
   } catch {
-    throw new Error(`Non-JSON response: ${responseText.slice(0, 200)}`);
+    throw new Error(`Non-JSON from Gemini: ${responseText.slice(0, 200)}`);
   }
 
-  const message = (data as {
-    choices?: Array<{
-      message?: {
-        images?: Array<{ imageUrl?: { url?: string } }>;
-        content?: Array<{
-          type?: string;
-          image_url?: { url?: string };
-          inline_data?: { data?: string; mime_type?: string };
-        }> | string;
+  // Parse response: candidates[0].content.parts[] — cari part yang type image
+  const parts = (data as {
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{
+          text?: string;
+          inlineData?: { mimeType?: string; data?: string };
+        }>;
       };
     }>;
-  })?.choices?.[0]?.message;
+  })?.candidates?.[0]?.content?.parts;
 
-  if (!message) {
-    throw new Error(`No message in response: ${JSON.stringify(data).slice(0, 200)}`);
+  if (!parts || parts.length === 0) {
+    // Log full response untuk debug
+    throw new Error(`Gemini returned no parts. Response: ${JSON.stringify(data).slice(0, 400)}`);
   }
 
-  // Format 1: message.images[]
-  if (message.images?.length) {
-    const imgUrl = message.images[0]?.imageUrl?.url;
-    if (imgUrl) {
-      if (imgUrl.startsWith('data:')) {
-        return Buffer.from(imgUrl.split(',')[1], 'base64');
-      }
-      const imgRes = await fetch(imgUrl, { signal: AbortSignal.timeout(30_000) });
-      if (!imgRes.ok) throw new Error(`Fetch generated image failed: ${imgRes.status}`);
-      return Buffer.from(await imgRes.arrayBuffer());
+  for (const part of parts) {
+    if (part.inlineData?.data) {
+      return Buffer.from(part.inlineData.data, 'base64');
     }
   }
 
-  // Format 2: content array
-  if (Array.isArray(message.content)) {
-    for (const part of message.content) {
-      if (part.type === 'image_url' && part.image_url?.url) {
-        const url = part.image_url.url;
-        if (url.startsWith('data:')) return Buffer.from(url.split(',')[1], 'base64');
-        const imgRes = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-        if (!imgRes.ok) throw new Error(`Fetch image failed: ${imgRes.status}`);
-        return Buffer.from(await imgRes.arrayBuffer());
-      }
-      if (part.type === 'inline_data' && part.inline_data?.data) {
-        return Buffer.from(part.inline_data.data, 'base64');
-      }
-    }
-  }
-
-  // Format 3: content string (text-only model → tidak ada image output)
-  // Kalau model text-only, throw agar fallback ke Pollinations
-  if (typeof message.content === 'string') {
-    throw new Error(`Model ${model} returned text-only (no image output). Use image-out model.`);
-  }
-
-  throw new Error(`No image found in response: ${JSON.stringify(data).slice(0, 300)}`);
+  // Kalau semua parts adalah text (model nolak generate image)
+  const textParts = parts.filter(p => p.text).map(p => p.text).join(' ');
+  throw new Error(`Gemini returned text only: ${textParts.slice(0, 200)}`);
 }
 
 // ─── Upload Buffer → Cloudinary ───────────────────────────────────────────────
@@ -221,9 +161,8 @@ function classifyError(msg: string): 'rate_limit' | 'not_retryable' | 'retryable
 
   if (
     msg.includes('400') || msg.includes('404') ||
-    msg.includes('not found') || msg.includes('invalid') ||
     msg.includes('INVALID_ARGUMENT') || msg.includes('not support') ||
-    msg.includes('text-only')
+    msg.includes('text only') || msg.includes('API_KEY_INVALID')
   ) return 'not_retryable';
 
   return 'retryable';
@@ -237,13 +176,17 @@ async function fetchLogoAsBase64(logoUrl: string): Promise<{ base64: string; mim
   const res = await fetch(logoUrl, { signal: AbortSignal.timeout(15_000) });
   if (!res.ok) throw new Error(`Failed to fetch logo: ${res.status}`);
   const contentType = res.headers.get('content-type') || 'image/png';
-  const mimeType = contentType.split(';')[0].trim();
+  // Gemini tidak support SVG — normalkan ke image/png kalau SVG
+  let mimeType = contentType.split(';')[0].trim();
+  if (mimeType === 'image/svg+xml' || mimeType === 'image/svg') {
+    mimeType = 'image/png'; // akan tetap dikirim, tapi Gemini mungkin reject — di-handle di error
+  }
   const buffer = await res.arrayBuffer();
   const base64 = Buffer.from(buffer).toString('base64');
   return { base64, mimeType };
 }
 
-// ─── Generate 1 scene: coba OR models dulu, fallback ke Pollinations ──────────
+// ─── Generate 1 scene dengan retry ───────────────────────────────────────────
 async function generateScene(
   sceneConfig: (typeof SCENES)[0],
   title: string,
@@ -253,58 +196,36 @@ async function generateScene(
   logoMime: string,
 ): Promise<MockupResult> {
   const prompt = sceneConfig.buildPrompt(title, description, category);
-  const errors: string[] = [];
-  const hasApiKey = !!process.env.OPENROUTER_API_KEY;
+  const maxAttempts = 3;
 
-  // ── Coba OpenRouter models (hanya image-out models) ──
-  if (hasApiKey) {
-    // Filter ke model yg support image output saja
-    const imageOutModels = OR_MODELS.filter(m =>
-      m.includes('image') || m.includes('imagen')
-    );
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      console.log(`[mockup] scene=${sceneConfig.scene} attempt=${attempt}`);
+      const imgBuffer = await callGeminiImageAPI(prompt, logoBase64, logoMime);
+      const cloudUrl  = await uploadBufferToCloudinary(imgBuffer);
+      console.log(`[mockup] ✓ scene=${sceneConfig.scene}`);
+      return { scene: sceneConfig.scene, label: sceneConfig.label, url: cloudUrl };
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const errType = classifyError(msg);
+      console.warn(`[mockup] scene=${sceneConfig.scene} att=${attempt} [${errType}]: ${msg.slice(0, 150)}`);
 
-    for (const model of imageOutModels) {
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          console.log(`[mockup] scene=${sceneConfig.scene} model=${model} attempt=${attempt}`);
-          const imgBuffer = await callOpenRouter(model, prompt, logoBase64, logoMime);
-          const cloudUrl  = await uploadBufferToCloudinary(imgBuffer);
-          console.log(`[mockup] ✓ OR scene=${sceneConfig.scene}`);
-          return { scene: sceneConfig.scene, label: sceneConfig.label, url: cloudUrl };
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : String(e);
-          const errType = classifyError(msg);
-          console.warn(`[mockup] ${model} att${attempt} [${errType}]: ${msg.slice(0, 120)}`);
-          errors.push(`${model.split('/')[1]}[${errType}]: ${msg.slice(0, 60)}`);
+      if (errType === 'not_retryable') {
+        throw new Error(`Non-retryable error: ${msg}`);
+      }
 
-          if (errType === 'not_retryable') break; // coba model berikutnya
-
-          if (errType === 'rate_limit' && attempt < 2) {
-            await sleep(15_000);
-            continue;
-          }
-          break;
-        }
+      if (attempt < maxAttempts) {
+        // Rate limit → tunggu lebih lama; retryable → tunggu sebentar
+        const delay = errType === 'rate_limit' ? 20_000 : 5_000;
+        console.log(`[mockup] retry in ${delay / 1000}s…`);
+        await sleep(delay);
+      } else {
+        throw new Error(`Failed after ${maxAttempts} attempts: ${msg}`);
       }
     }
-    console.warn(`[mockup] OR failed for ${sceneConfig.scene}, falling back to Pollinations`);
   }
 
-  // ── Fallback: Pollinations AI (free, no key) ──
-  try {
-    console.log(`[mockup] Pollinations fallback: scene=${sceneConfig.scene}`);
-    const pollPrompt = sceneConfig.pollinationsPrompt(title);
-    const imgBuffer = await generateViaPollinations(pollPrompt);
-    const cloudUrl  = await uploadBufferToCloudinary(imgBuffer);
-    console.log(`[mockup] ✓ Pollinations scene=${sceneConfig.scene}`);
-    return { scene: sceneConfig.scene, label: sceneConfig.label, url: cloudUrl };
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    errors.push(`pollinations: ${msg.slice(0, 80)}`);
-    console.error(`[mockup] Pollinations also failed: ${msg}`);
-  }
-
-  throw new Error(`All sources failed for "${sceneConfig.scene}": ${errors.join(' | ')}`);
+  throw new Error(`generateScene unreachable: ${sceneConfig.scene}`);
 }
 
 // ─── POST /api/generate-mockups ───────────────────────────────────────────────
@@ -324,6 +245,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'logo_url is required' }, { status: 400 });
   }
 
+  if (!process.env.GOOGLE_AI_API_KEY) {
+    return NextResponse.json({ error: 'GOOGLE_AI_API_KEY env var not set' }, { status: 500 });
+  }
+
   if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
     return NextResponse.json({ error: 'Cloudinary env vars not configured' }, { status: 500 });
   }
@@ -337,7 +262,7 @@ export async function POST(req: NextRequest) {
 
     for (let i = 0; i < SCENES.length; i++) {
       const scene = SCENES[i];
-      console.log(`[mockup] processing scene ${i + 1}/${SCENES.length}: ${scene.scene}`);
+      console.log(`[mockup] scene ${i + 1}/${SCENES.length}: ${scene.scene}`);
 
       try {
         const result = await generateScene(
@@ -348,12 +273,15 @@ export async function POST(req: NextRequest) {
         console.error(`[mockup] scene skipped (${scene.scene}):`, e instanceof Error ? e.message : e);
       }
 
-      if (i < SCENES.length - 1) await sleep(2_000);
+      // Jaga rate limit Gemini free (~10 RPM) — tunggu 7s antar scene
+      if (i < SCENES.length - 1) {
+        await sleep(7_000);
+      }
     }
 
     if (results.length === 0) {
       return NextResponse.json(
-        { error: 'Semua scene gagal. Cek koneksi dan Cloudinary credentials.' },
+        { error: 'Semua scene gagal. Cek GOOGLE_AI_API_KEY di Vercel env vars.' },
         { status: 502 },
       );
     }
