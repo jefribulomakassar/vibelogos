@@ -14,110 +14,96 @@ interface MockupResult {
   url: string;
 }
 
+// ─── Scenes ───────────────────────────────────────────────────────────────────
 const SCENES = [
   {
     scene: 'tshirt',
     label: '👕 T-Shirt',
-    buildPrompt: (title: string, desc: string, cat: string) =>
-      `Using this exact logo of "${title}" (a ${cat} brand${desc ? `, ${desc}` : ''}), reproduce the logo faithfully with same colors, shapes, and typography on a photorealistic mockup: logo printed centered on chest of a clean white t-shirt. Flat lay, studio lighting, minimal white/grey background, 4K commercial photography quality.`,
+    buildPrompt: (title: string, cat: string) =>
+      `Photorealistic product mockup: a clean white t-shirt flat lay on a light grey studio background. The shirt has the text "${title}" printed in bold centered on the chest, clean modern typography, professional branding for a ${cat} company. Studio lighting, commercial photography, 4K quality. No people, just the shirt.`,
   },
   {
     scene: 'business_card',
     label: '💳 Business Card',
-    buildPrompt: (title: string, desc: string, cat: string) =>
-      `Using this exact logo of "${title}" (a ${cat} brand${desc ? `, ${desc}` : ''}), reproduce the logo faithfully with same colors, shapes, and typography on a photorealistic mockup: logo on front of a premium matte white business card. Marble surface, slight shadow, elegant top-down angle, studio photography quality.`,
+    buildPrompt: (title: string, cat: string) =>
+      `Photorealistic product mockup: a premium matte white business card on a marble surface, top-down angle. The card displays "${title}" in elegant centered typography, minimal design, professional ${cat} brand identity. Soft shadow, studio lighting, commercial photography quality.`,
   },
   {
     scene: 'mug',
     label: '☕ Mug',
-    buildPrompt: (title: string, desc: string, cat: string) =>
-      `Using this exact logo of "${title}" (a ${cat} brand${desc ? `, ${desc}` : ''}), reproduce the logo faithfully with same colors, shapes, and typography on a photorealistic mockup: logo on a clean white ceramic coffee mug. Wooden table, warm cafe lighting, professional photography, logo clearly visible and centered.`,
+    buildPrompt: (title: string, cat: string) =>
+      `Photorealistic product mockup: a clean white ceramic coffee mug on a wooden table with warm cafe lighting. The mug has "${title}" printed clearly in modern typography centered on the front, ${cat} brand. Professional product photography, soft bokeh background.`,
   },
 ];
 
-// ─── Google AI SDK — gemini-2.5-flash-image (free 500 req/day) ────────────────
-// Docs: https://ai.google.dev/gemini-api/docs/image-generation
-// Model: gemini-2.5-flash-image (Nano Banana) — image-in + image-out
-async function callGeminiImageAPI(
-  prompt: string,
-  logoBase64: string,
-  logoMime: string,
-): Promise<Buffer> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error('GEMINI_API_KEY not set');
+// ─── HuggingFace FLUX.1-dev — free ~300 req/hour ──────────────────────────────
+async function callHuggingFace(prompt: string): Promise<Buffer> {
+  const token = process.env.HF_TOKEN;
+  if (!token) throw new Error('HF_TOKEN not set');
 
-  // Gunakan generateContent endpoint dengan responseModalities: ["IMAGE", "TEXT"]
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${apiKey}`;
+  // Model options (fallback chain):
+  // 1. black-forest-labs/FLUX.1-schnell — lebih cepat, free
+  // 2. stabilityai/stable-diffusion-xl-base-1.0 — fallback
+  const models = [
+    'black-forest-labs/FLUX.1-schnell',
+    'black-forest-labs/FLUX.1-dev',
+    'stabilityai/stable-diffusion-xl-base-1.0',
+  ];
 
-  const body = {
-    contents: [
-      {
-        parts: [
-          // Logo image sebagai input
-          {
-            inline_data: {
-              mime_type: logoMime,
-              data: logoBase64,
+  for (const model of models) {
+    try {
+      console.log(`[mockup] trying HF model: ${model}`);
+      const res = await fetch(
+        `https://api-inference.huggingface.co/models/${model}`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'x-wait-for-model': 'true', // tunggu kalau model cold start
+          },
+          body: JSON.stringify({
+            inputs: prompt,
+            parameters: {
+              width: 1024,
+              height: 1024,
+              num_inference_steps: 4, // schnell optimal di 4 steps
             },
-          },
-          // Text prompt
-          {
-            text: prompt,
-          },
-        ],
-      },
-    ],
-    generationConfig: {
-      responseModalities: ['IMAGE', 'TEXT'],
-    },
-  };
+          }),
+          signal: AbortSignal.timeout(120_000),
+        }
+      );
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(90_000),
-  });
+      if (!res.ok) {
+        const errText = await res.text();
+        // 503 = model loading, coba model berikutnya
+        // 429 = rate limit, throw langsung
+        if (res.status === 429) throw new Error(`HF rate limit 429: ${errText.slice(0, 200)}`);
+        throw new Error(`HF ${model} error ${res.status}: ${errText.slice(0, 200)}`);
+      }
 
-  const responseText = await res.text();
+      // Response langsung berupa binary image
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('image')) {
+        const text = await res.text();
+        throw new Error(`HF returned non-image: ${text.slice(0, 200)}`);
+      }
 
-  if (!res.ok) {
-    throw new Error(`Gemini API error ${res.status}: ${responseText.slice(0, 400)}`);
-  }
+      const buffer = Buffer.from(await res.arrayBuffer());
+      if (buffer.length < 1000) throw new Error(`HF returned empty image (${buffer.length} bytes)`);
 
-  let data: unknown;
-  try {
-    data = JSON.parse(responseText);
-  } catch {
-    throw new Error(`Non-JSON from Gemini: ${responseText.slice(0, 200)}`);
-  }
+      console.log(`[mockup] ✓ HF ${model} OK, size=${buffer.length}`);
+      return buffer;
 
-  // Parse response: candidates[0].content.parts[] — cari part yang type image
-  const parts = (data as {
-    candidates?: Array<{
-      content?: {
-        parts?: Array<{
-          text?: string;
-          inlineData?: { mimeType?: string; data?: string };
-        }>;
-      };
-    }>;
-  })?.candidates?.[0]?.content?.parts;
-
-  if (!parts || parts.length === 0) {
-    // Log full response untuk debug
-    throw new Error(`Gemini returned no parts. Response: ${JSON.stringify(data).slice(0, 400)}`);
-  }
-
-  for (const part of parts) {
-    if (part.inlineData?.data) {
-      return Buffer.from(part.inlineData.data, 'base64');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // Rate limit — stop mencoba
+      if (msg.includes('429')) throw new Error(msg);
+      console.warn(`[mockup] HF ${model} failed: ${msg.slice(0, 100)}, trying next...`);
     }
   }
 
-  // Kalau semua parts adalah text (model nolak generate image)
-  const textParts = parts.filter(p => p.text).map(p => p.text).join(' ');
-  throw new Error(`Gemini returned text only: ${textParts.slice(0, 200)}`);
+  throw new Error('All HuggingFace models failed');
 }
 
 // ─── Upload Buffer → Cloudinary ───────────────────────────────────────────────
@@ -152,80 +138,34 @@ async function uploadBufferToCloudinary(buffer: Buffer): Promise<string> {
   return result.secure_url as string;
 }
 
-function classifyError(msg: string): 'rate_limit' | 'not_retryable' | 'retryable' {
-  if (
-    msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') ||
-    msg.includes('quota') || msg.includes('rate limit') ||
-    msg.includes('too many') || msg.includes('capacity')
-  ) return 'rate_limit';
-
-  if (
-    msg.includes('400') || msg.includes('404') ||
-    msg.includes('INVALID_ARGUMENT') || msg.includes('not support') ||
-    msg.includes('text only') || msg.includes('API_KEY_INVALID')
-  ) return 'not_retryable';
-
-  return 'retryable';
-}
-
 function sleep(ms: number) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-async function fetchLogoAsBase64(logoUrl: string): Promise<{ base64: string; mimeType: string }> {
-  const res = await fetch(logoUrl, { signal: AbortSignal.timeout(15_000) });
-  if (!res.ok) throw new Error(`Failed to fetch logo: ${res.status}`);
-  const contentType = res.headers.get('content-type') || 'image/png';
-  // Gemini tidak support SVG — normalkan ke image/png kalau SVG
-  let mimeType = contentType.split(';')[0].trim();
-  if (mimeType === 'image/svg+xml' || mimeType === 'image/svg') {
-    mimeType = 'image/png'; // akan tetap dikirim, tapi Gemini mungkin reject — di-handle di error
-  }
-  const buffer = await res.arrayBuffer();
-  const base64 = Buffer.from(buffer).toString('base64');
-  return { base64, mimeType };
-}
-
-// ─── Generate 1 scene dengan retry ───────────────────────────────────────────
+// ─── Generate 1 scene ─────────────────────────────────────────────────────────
 async function generateScene(
   sceneConfig: (typeof SCENES)[0],
   title: string,
-  description: string,
   category: string,
-  logoBase64: string,
-  logoMime: string,
 ): Promise<MockupResult> {
-  const prompt = sceneConfig.buildPrompt(title, description, category);
-  const maxAttempts = 3;
+  const prompt = sceneConfig.buildPrompt(title, category);
+  const maxAttempts = 2;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       console.log(`[mockup] scene=${sceneConfig.scene} attempt=${attempt}`);
-      const imgBuffer = await callGeminiImageAPI(prompt, logoBase64, logoMime);
+      const imgBuffer = await callHuggingFace(prompt);
       const cloudUrl  = await uploadBufferToCloudinary(imgBuffer);
-      console.log(`[mockup] ✓ scene=${sceneConfig.scene}`);
       return { scene: sceneConfig.scene, label: sceneConfig.label, url: cloudUrl };
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      const errType = classifyError(msg);
-      console.warn(`[mockup] scene=${sceneConfig.scene} att=${attempt} [${errType}]: ${msg.slice(0, 150)}`);
-
-      if (errType === 'not_retryable') {
-        throw new Error(`Non-retryable error: ${msg}`);
-      }
-
-      if (attempt < maxAttempts) {
-        // Rate limit → tunggu lebih lama; retryable → tunggu sebentar
-        const delay = errType === 'rate_limit' ? 20_000 : 5_000;
-        console.log(`[mockup] retry in ${delay / 1000}s…`);
-        await sleep(delay);
-      } else {
-        throw new Error(`Failed after ${maxAttempts} attempts: ${msg}`);
-      }
+      console.warn(`[mockup] scene=${sceneConfig.scene} att=${attempt}: ${msg.slice(0, 150)}`);
+      if (attempt < maxAttempts) await sleep(5_000);
+      else throw new Error(msg);
     }
   }
 
-  throw new Error(`generateScene unreachable: ${sceneConfig.scene}`);
+  throw new Error('unreachable');
 }
 
 // ─── POST /api/generate-mockups ───────────────────────────────────────────────
@@ -236,61 +176,42 @@ export async function POST(req: NextRequest) {
 
   const {
     logo_url,
-    title       = 'Logo',
-    description = '',
-    category    = 'Brand',
+    title    = 'Logo',
+    category = 'Brand',
   } = await req.json().catch(() => ({}));
 
   if (!logo_url) {
     return NextResponse.json({ error: 'logo_url is required' }, { status: 400 });
   }
-  
-  if (!process.env.GEMINI_API_KEY) {
-    return NextResponse.json({ error: 'GEMINI_API_KEY env var not set' }, { status: 500 });
+
+  if (!process.env.HF_TOKEN) {
+    return NextResponse.json({ error: 'HF_TOKEN env var not set' }, { status: 500 });
   }
 
   if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
     return NextResponse.json({ error: 'Cloudinary env vars not configured' }, { status: 500 });
   }
 
-  try {
-    console.log('[mockup] fetching logo:', logo_url);
-    const { base64: logoBase64, mimeType: logoMime } = await fetchLogoAsBase64(logo_url);
-    console.log(`[mockup] logo fetched mime=${logoMime} size=${logoBase64.length}`);
+  const results: MockupResult[] = [];
 
-    const results: MockupResult[] = [];
-
-    for (let i = 0; i < SCENES.length; i++) {
-      const scene = SCENES[i];
-      console.log(`[mockup] scene ${i + 1}/${SCENES.length}: ${scene.scene}`);
-
-      try {
-        const result = await generateScene(
-          scene, title, description, category, logoBase64, logoMime,
-        );
-        results.push(result);
-      } catch (e) {
-        console.error(`[mockup] scene skipped (${scene.scene}):`, e instanceof Error ? e.message : e);
-      }
-
-      // Jaga rate limit Gemini free (~10 RPM) — tunggu 7s antar scene
-      if (i < SCENES.length - 1) {
-        await sleep(7_000);
-      }
+  for (let i = 0; i < SCENES.length; i++) {
+    const scene = SCENES[i];
+    console.log(`[mockup] scene ${i + 1}/${SCENES.length}: ${scene.scene}`);
+    try {
+      const result = await generateScene(scene, title, category);
+      results.push(result);
+    } catch (e) {
+      console.error(`[mockup] scene skipped (${scene.scene}):`, e instanceof Error ? e.message : e);
     }
-
-    if (results.length === 0) {
-      return NextResponse.json(
-        { error: 'Semua scene gagal. Cek GEMINI_API_KEY di Vercel env vars.' },
-        { status: 502 },
-      );
-    }
-
-    return NextResponse.json({ mockups: results, total: results.length });
-
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error('[mockup] fatal error:', msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    if (i < SCENES.length - 1) await sleep(3_000);
   }
+
+  if (results.length === 0) {
+    return NextResponse.json(
+      { error: 'Semua scene gagal. Cek HF_TOKEN di Vercel env vars.' },
+      { status: 502 },
+    );
+  }
+
+  return NextResponse.json({ mockups: results, total: results.length });
 }
