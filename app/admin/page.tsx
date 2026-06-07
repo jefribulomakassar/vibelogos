@@ -99,16 +99,12 @@ function LogoUploadZone({ value, onChange, adminToken }: {
 // ─── AI Mockup Generator ──────────────────────────────────────────────────────
 interface MockupResult { scene: string; label: string; url: string; }
 
-// Step messages — estimasi waktu 6 scene × ~35s delay = ~4 menit
-// Free tier Gemini image: 2 IPM → wajib 35s jeda antar scene
+// Step messages — 3 scene, estimasi ~1–2 menit total
 const STEP_MESSAGES = [
   '🤖 Mengirim logo ke Gemini AI…',
-  '🎨 Scene 1/6 — mohon tunggu (~4 mnt total)…',
-  '🎨 Scene 2/6 — generating mockup…',
-  '🎨 Scene 3/6 — generating mockup…',
-  '🎨 Scene 4/6 — generating mockup…',
-  '🎨 Scene 5/6 — generating mockup…',
-  '🎨 Scene 6/6 — hampir selesai…',
+  '👕 Scene 1/3 — T-Shirt mockup…',
+  '💳 Scene 2/3 — Business Card mockup…',
+  '☕ Scene 3/3 — Mug mockup…',
   '☁️ Uploading ke Cloudinary…',
 ];
 
@@ -134,7 +130,7 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
     setStepIdx(0);
     stepTimerRef.current = setInterval(() => {
       setStepIdx(prev => Math.min(prev + 1, STEP_MESSAGES.length - 1));
-    }, 38_000);
+    }, 20_000);
   };
 
   const stopStepTimer = () => {
@@ -186,7 +182,7 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
       {/* Estimasi waktu warning */}
       {!generating && logoUrl && (
         <div style={{ background: 'rgba(200,245,66,0.06)', border: '1px solid rgba(200,245,66,0.15)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
-          ⏱️ Estimasi ~4 menit untuk 6 scene (free tier limit: 2 img/menit)
+          ⏱️ Estimasi ~1–2 menit untuk 3 scene mockup
         </div>
       )}
 
