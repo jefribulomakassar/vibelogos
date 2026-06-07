@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 
+// Vercel: perpanjang timeout route ini hingga 60 detik (free plan max)
+// Upgrade ke Vercel Pro → ganti jadi 300
+export const maxDuration = 60;
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 function checkAdmin(req: NextRequest) {
   return req.headers.get('x-admin-token') === process.env.ADMIN_TOKEN;
@@ -18,7 +22,7 @@ interface MockupResult {
 const GEMINI_MODELS = [
   'gemini-2.0-flash-preview-image-generation', // primary — paling cepat
   'gemini-2.0-flash-exp-image-generation',      // fallback 1
-  'gemini-1.5-flash-latest',                    // fallback 2 (support image output via multimodal)
+  'gemini-1.5-flash-latest',                    // fallback 2
 ];
 
 // ─── 6 Scene Definitions ──────────────────────────────────────────────────────
@@ -77,10 +81,8 @@ Generate a photorealistic outdoor advertising mockup showing this EXACT logo (re
 async function fetchLogoAsBase64(logoUrl: string): Promise<{ base64: string; mimeType: string }> {
   const res = await fetch(logoUrl, { signal: AbortSignal.timeout(15_000) });
   if (!res.ok) throw new Error(`Failed to fetch logo: ${res.status}`);
-
   const contentType = res.headers.get('content-type') || 'image/png';
-  // Normalize mime type
-  const mimeType = contentType.split(';')[0].trim() as 'image/png' | 'image/jpeg' | 'image/webp';
+  const mimeType = contentType.split(';')[0].trim();
   const buffer = await res.arrayBuffer();
   const base64 = Buffer.from(buffer).toString('base64');
   return { base64, mimeType };
@@ -100,23 +102,13 @@ async function callGemini(
     contents: [
       {
         parts: [
-          // Input 1: gambar logo asli
-          {
-            inline_data: {
-              mime_type: logoMime,
-              data: logoBase64,
-            },
-          },
-          // Input 2: instruksi prompt
-          {
-            text: prompt,
-          },
+          { inline_data: { mime_type: logoMime, data: logoBase64 } },
+          { text: prompt },
         ],
       },
     ],
     generationConfig: {
       responseModalities: ['IMAGE', 'TEXT'],
-      // Untuk model image generation
     },
   };
 
@@ -129,12 +121,10 @@ async function callGemini(
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Gemini ${model} error ${res.status}: ${errText.slice(0, 200)}`);
+    throw new Error(`Gemini ${model} error ${res.status}: ${errText.slice(0, 300)}`);
   }
 
   const data = await res.json();
-
-  // Extract image dari response
   const parts = data?.candidates?.[0]?.content?.parts ?? [];
   for (const part of parts) {
     if (part.inline_data?.data) {
@@ -142,7 +132,7 @@ async function callGemini(
     }
   }
 
-  throw new Error(`Gemini ${model} returned no image in response`);
+  throw new Error(`Gemini ${model} returned no image. Response: ${JSON.stringify(data).slice(0, 200)}`);
 }
 
 // ─── Upload Buffer → Cloudinary ───────────────────────────────────────────────
@@ -201,7 +191,6 @@ async function generateScene(
       const msg = e instanceof Error ? e.message : String(e);
       console.warn(`[mockup] scene=${sceneConfig.scene} model=${model} failed: ${msg}`);
       errors.push(`${model}: ${msg}`);
-      // Jeda sebelum coba model berikutnya
       await new Promise(r => setTimeout(r, 1_000));
     }
   }
@@ -236,12 +225,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Fetch logo sekali, reuse untuk semua scene
     console.log('[mockup] fetching logo:', logo_url);
     const { base64: logoBase64, mimeType: logoMime } = await fetchLogoAsBase64(logo_url);
     console.log(`[mockup] logo fetched, mime=${logoMime}, size=${logoBase64.length} chars`);
 
-    // Generate 6 scene dalam 2 batch (3 paralel sekaligus) agar tidak flood API
+    // 2 batch @ 3 paralel — jaga agar tidak flood rate limit
     const results: MockupResult[] = [];
     const batches = [SCENES.slice(0, 3), SCENES.slice(3, 6)];
 
@@ -251,19 +239,15 @@ export async function POST(req: NextRequest) {
           generateScene(scene, title, description, category, logoBase64, logoMime, apiKey)
         ),
       );
-
       for (const r of batchResults) {
-        if (r.status === 'fulfilled') {
-          results.push(r.value);
-        } else {
-          console.error('[mockup] scene skipped:', r.reason);
-        }
+        if (r.status === 'fulfilled') results.push(r.value);
+        else console.error('[mockup] scene skipped:', r.reason);
       }
     }
 
     if (results.length === 0) {
       return NextResponse.json(
-        { error: 'Semua scene gagal digenerate. Periksa GEMINI_API_KEY atau coba lagi.' },
+        { error: 'Semua scene gagal. Periksa GEMINI_API_KEY atau coba lagi.' },
         { status: 502 },
       );
     }
