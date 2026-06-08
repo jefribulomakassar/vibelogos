@@ -327,6 +327,7 @@ function OutputPanel({ output, status, error }: {
       </div>
     );
 
+  if (!output) return null;  // ← tambah ini sebelum return <div>
   return (
     <div>
       <div style={{ marginBottom: 12, fontSize: 11, color: "#94a3b8", letterSpacing: 1 }}>
@@ -377,7 +378,7 @@ function OutputPanel({ output, status, error }: {
           { k: "sold_info", label: "Sold Info", icon: "💰" },
           { k: "designer", label: "Designer", icon: "🎨" },
         ].map(({ k, label, icon }) => {
-          const val = output[k];
+          const val = output?.[k];
           if (!val || (Array.isArray(val) && val.length === 0)) return null;
           return (
             <div
