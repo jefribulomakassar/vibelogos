@@ -171,7 +171,7 @@ function parseWithCheerio(html: string, logogroundUrl: string): LogoGroundData {
     main_category,
     secondary_categories,
     logo_url,
-    logoground_url,
+    logoground_url: logogroundUrl,
   };
 }
 
