@@ -438,51 +438,44 @@ export default function App() {
 
   const runScript = async (key: string) => {
     setStates((s) => ({ ...s, [key]: { status: "loading", output: null, error: null } }));
-
+  
     try {
-      // Simulate real fetch via Claude API acting as the scraper
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch("/api/scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          messages: [
-            {
-              role: "user",
-              content: `Fetch and parse this URL: ${targetUrl}
-              
-Extract and return ONLY a valid JSON object (no markdown, no explanation) with these exact keys:
-- title: page title
-- description: meta description content  
-- keywords: array of tag words found in the TAGS section (max 10)
-- sold_info: the sentence about when/price it was sold
-- designer: designer name
-
-Return ONLY the JSON object.`,
-            },
-          ],
-        }),
+        body: JSON.stringify({ url: targetUrl }),
       });
-
-      const data = await response.json();
-      const raw = data.content?.map((c: { text?: string }) => c.text || "").join("") || "";
-      const clean = raw.replace(/```json|```/g, "").trim();
-
-      let parsed;
-      try {
-        parsed = JSON.parse(clean);
-      } catch {
-        // fallback to mock if parse fails - real scraper would work
-        parsed = MOCK_OUTPUT;
+  
+      const { html, error } = await response.json();
+      if (error) throw new Error(error);
+  
+      // Parse dari HTML string
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, "text/html");
+  
+      const title = doc.querySelector("title")?.textContent?.trim() || "";
+      const description =
+        doc.querySelector('meta[name="description"]')?.getAttribute("content") ||
+        doc.querySelector('meta[property="og:description"]')?.getAttribute("content") || "";
+  
+      const bodyText = doc.body?.innerText || "";
+      let keywords: string[] = [];
+      const tagsIdx = bodyText.indexOf("TAGS");
+      if (tagsIdx !== -1) {
+        const chunk = bodyText.slice(tagsIdx + 4, tagsIdx + 200).trim();
+        keywords = chunk.split(/\s+/).filter((w) => w && w !== "...").slice(0, 10);
       }
-
+  
+      const sold_info = bodyText.match(/This logo was sold on[^.]+\./)?.[0] || "";
+      const designer = doc.querySelector("a[href*='designer.php']")?.textContent?.trim() || "";
+  
+      const parsed = { title, description, keywords, sold_info, designer };
       setStates((s) => ({ ...s, [key]: { status: "success", output: parsed, error: null } }));
+  
     } catch (err) {
-      // Network fallback — show mock with note
       setStates((s) => ({
         ...s,
-        [key]: { status: "success", output: MOCK_OUTPUT, error: null },
+        [key]: { status: "error", output: null, error: String(err) },
       }));
     }
   };
