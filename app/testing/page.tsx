@@ -588,7 +588,7 @@ Return ONLY the JSON object.`,
             <button
               key={key}
               className="tab-btn"
-              onClick={() => setActiveTab(key)}
+              onClick={() => setActiveTab(key as keyof typeof SCRIPTS)}
               style={{
                 background: activeTab === key ? sc.color + "22" : "#0f172a",
                 color: activeTab === key ? sc.color : "#64748b",
@@ -718,7 +718,7 @@ Return ONLY the JSON object.`,
                     padding: "6px 0",
                     borderBottom: "1px solid #1e293b",
                   }}
-                  onClick={() => setActiveTab(key)}
+                  onClick={() => setActiveTab(key as keyof typeof SCRIPTS)}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span>{sc.icon}</span>
