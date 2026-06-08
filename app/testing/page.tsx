@@ -1,6 +1,6 @@
 'use client';
 import { useState } from "react";
-
+const [targetUrl, setTargetUrl] = useState("https://www.logoground.com/logo.php?id=961436");
 const SCRIPTS = {
   python_bs4: {
     label: "Python · requests + BeautifulSoup",
@@ -551,9 +551,20 @@ Return ONLY the JSON object.`,
           }}
         >
           <span style={{ color: "#475569", fontSize: 11 }}>TARGET URL</span>
-          <span style={{ color: "#7dd3fc", fontSize: 12, flex: 1 }}>
-            https://www.logoground.com/logo.php?id=961436
-          </span>
+          <input
+            value={targetUrl}
+            onChange={(e) => setTargetUrl(e.target.value)}
+            style={{
+              flex: 1,
+              background: "transparent",
+              border: "none",
+              outline: "none",
+              color: "#7dd3fc",
+              fontSize: 12,
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+            placeholder="https://..."
+          />
           <button
             className="run-btn"
             onClick={runAll}
