@@ -256,7 +256,7 @@ const MOCK_OUTPUT = {
   designer: "Scredeck",
 };
 
-function StatusBadge({ status }) {
+function StatusBadge({ status }: { status: "idle" | "loading" | "success" | "error" }) {
   const map = {
     idle: { bg: "#1e293b", color: "#64748b", text: "Belum dijalankan" },
     loading: { bg: "#1e3a5f", color: "#60a5fa", text: "Mengambil data..." },
@@ -282,7 +282,11 @@ function StatusBadge({ status }) {
   );
 }
 
-function OutputPanel({ output, status, error }) {
+function OutputPanel({ output, status, error }: { 
+    output: Record<string, unknown> | null; 
+    status: "idle" | "loading" | "success" | "error"; 
+    error: string | null;
+  }) {
   if (status === "idle")
     return (
       <div
