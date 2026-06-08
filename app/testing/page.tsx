@@ -378,7 +378,7 @@ function OutputPanel({ output, status, error }: {
           { k: "sold_info", label: "Sold Info", icon: "💰" },
           { k: "designer", label: "Designer", icon: "🎨" },
         ].map(({ k, label, icon }) => {
-          const val = output?.[k];
+          const val = output[k] as string | string[] | undefined;
           if (!val || (Array.isArray(val) && val.length === 0)) return null;
           return (
             <div
