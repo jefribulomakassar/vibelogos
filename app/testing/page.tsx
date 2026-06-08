@@ -433,8 +433,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("python_bs4");
   const [states, setStates] = useState(
     Object.keys(SCRIPTS).reduce<Record<string, { status: string; output: Record<string, unknown> | null; error: string | null }>>(
-  (a, k) => ({ ...a, [k]: { status: "idle", output: null, error: null } }), {}
-  );
+      (a, k) => ({ ...a, [k]: { status: "idle", output: null, error: null } }), {}
+    )
 
   const runScript = async (key: string) => {
     setStates((s) => ({ ...s, [key]: { status: "loading", output: null, error: null } }));
