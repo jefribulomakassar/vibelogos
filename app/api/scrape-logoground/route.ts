@@ -1,5 +1,7 @@
 // app/api/scrape-logoground/route.ts
 import { NextRequest, NextResponse } from 'next/server';
+import axios from 'axios';
+import * as cheerio from 'cheerio';
 
 export const maxDuration = 60;
 
@@ -33,73 +35,132 @@ function cleanText(text: string): string {
   return text.replace(/\s+/g, ' ').replace(/\n+/g, ' ').trim();
 }
 
-function parseHTML(html: string, logogroundUrl: string): LogoGroundData {
+// ── Parse HTML menggunakan cheerio (akurat, DOM-aware) ────────────────────────
+function parseWithCheerio(html: string, logogroundUrl: string): LogoGroundData {
+  const $ = cheerio.load(html);
+
   // ── Title ──────────────────────────────────────────────────────────────────
-  const ogTitleMatch =
-    html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) ||
-    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i);
-  const titleTagMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-  const title = ogTitleMatch
-    ? cleanText(ogTitleMatch[1])
-    : titleTagMatch
-    ? cleanText(titleTagMatch[1].replace(/\s*[-|].*$/, ''))
-    : '';
+  const title =
+    cleanText($('meta[property="og:title"]').attr('content') ?? '') ||
+    cleanText($('title').text().replace(/\s*[-|].*$/, ''));
 
   // ── Logo Image URL ─────────────────────────────────────────────────────────
-  const ogImageMatch =
-    html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
-    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
-  const logo_url = ogImageMatch ? ogImageMatch[1].trim() : '';
+  const logo_url =
+    $('meta[property="og:image"]').attr('content')?.trim() ?? '';
 
   // ── Description ────────────────────────────────────────────────────────────
   let description = '';
-  const descSectionMatch = html.match(/DESIGNER'S DESCRIPTION\s*([\s\S]*?)(?:TAGS|<\/|$)/i);
+
+  // Cari section "DESIGNER'S DESCRIPTION" di teks body
+  const bodyHtml = $('body').html() ?? '';
+  const descSectionMatch = bodyHtml.match(
+    /DESIGNER'S DESCRIPTION\s*([\s\S]*?)(?:TAGS|<\/td>|<\/div>|$)/i,
+  );
   if (descSectionMatch) {
-    description = cleanText(descSectionMatch[1].replace(/<[^>]+>/g, ' '));
+    description = cleanText(
+      cheerio.load(descSectionMatch[1]).text(),
+    );
   }
+
+  // Fallback ke meta description
   if (!description) {
-    const ogDescMatch =
-      html.match(/<meta[^>]+(?:name=["']description["']|property=["']og:description["'])[^>]+content=["']([^"']+)["']/i) ||
-      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:name=["']description["']|property=["']og:description["'])/i);
-    if (ogDescMatch) {
-      const raw = ogDescMatch[1];
-      const semiIdx = raw.indexOf(';');
-      description = semiIdx !== -1 ? cleanText(raw.slice(semiIdx + 1)) : cleanText(raw);
+    const metaDesc =
+      $('meta[name="description"]').attr('content') ||
+      $('meta[property="og:description"]').attr('content') ||
+      '';
+    if (metaDesc) {
+      // Meta description logoground format: "Logo for sale: Title; <actual desc>"
+      const semiIdx = metaDesc.indexOf(';');
+      description =
+        semiIdx !== -1
+          ? cleanText(metaDesc.slice(semiIdx + 1))
+          : cleanText(metaDesc);
     }
   }
 
   // ── Keywords/Tags ──────────────────────────────────────────────────────────
   let keywords: string[] = [];
-  const tagsSectionMatch = html.match(/TAGS\s*([\s\S]*?)(?:<\/div>|<div|Similar logos|RELATED|$)/i);
+
+  // Cari teks "TAGS" lalu ambil konten setelahnya
+  const tagsSectionMatch = bodyHtml.match(
+    /TAGS\s*([\s\S]*?)(?:Similar logos|RELATED|<\/table>|<\/td>|<\/div>|$)/i,
+  );
   if (tagsSectionMatch) {
-    const tagsRaw = cleanText(tagsSectionMatch[1].replace(/<[^>]+>/g, ' '));
-    keywords = tagsRaw
+    const tagsText = cleanText(
+      cheerio.load(tagsSectionMatch[1]).text(),
+    );
+    keywords = tagsText
       .replace(/\.\.\./g, '')
-      .split(/\s+/)
+      .split(/[\s,]+/)
       .map((k) => k.trim().toLowerCase())
-      .filter((k) => k.length > 1 && k.length < 30);
+      .filter((k) => k.length > 1 && k.length < 30 && /^[a-z0-9 &-]+$/i.test(k));
+  }
+
+  // Fallback: ambil dari meta keywords jika ada
+  if (keywords.length === 0) {
+    const metaKw = $('meta[name="keywords"]').attr('content') ?? '';
+    if (metaKw) {
+      keywords = metaKw
+        .split(',')
+        .map((k) => k.trim().toLowerCase())
+        .filter((k) => k.length > 1);
+    }
   }
 
   // ── Price ──────────────────────────────────────────────────────────────────
-  const priceMatch = html.match(/>(\$[\d,]+)<\/(?:div|span|p|h[1-6]|strong)/);
-  const price = priceMatch ? parsePrice(priceMatch[1]) : 0;
+  let price = 0;
+  $('div, span, p, strong, h1, h2, h3, h4, h5, h6').each((_, el) => {
+    if (price > 0) return false; // break
+    const txt = $(el).text().trim();
+    if (/^\$[\d,]+$/.test(txt)) {
+      price = parsePrice(txt);
+    }
+  });
+
+  // Fallback regex
+  if (price === 0) {
+    const priceMatch = bodyHtml.match(/>(\$[\d,]+)<\/(?:div|span|p|h[1-6]|strong)/);
+    if (priceMatch) price = parsePrice(priceMatch[1]);
+  }
 
   // ── Main Category ──────────────────────────────────────────────────────────
   let main_category = '';
-  const mainCatMatch = html.match(/Logo Category[\s\S]*?<a[^>]*>([^<]+Logos)<\/a>/i);
-  if (mainCatMatch) {
-    main_category = cleanText(mainCatMatch[1].replace(/\s*Logos\s*$/i, ''));
+
+  // Cari link di sekitar "Logo Category"
+  const catSection = bodyHtml.match(/Logo Category[\s\S]*?(<a[^>]*>[^<]+Logos<\/a>)/i);
+  if (catSection) {
+    main_category = cleanText(
+      cheerio.load(catSection[1])('a').text().replace(/\s*Logos\s*$/i, ''),
+    );
+  }
+
+  // Fallback: ambil dari breadcrumb atau kategori link
+  if (!main_category) {
+    $('a[href*="category"]').each((_, el) => {
+      const txt = $(el).text().trim();
+      if (txt.endsWith('Logos') && !main_category) {
+        main_category = cleanText(txt.replace(/\s*Logos\s*$/i, ''));
+      }
+    });
   }
 
   // ── Secondary Categories ───────────────────────────────────────────────────
   const secondary_categories: string[] = [];
-  const subCatSection = html.match(/Sub-Categories([\s\S]*?)(?:Published|<\/ul>|<\/td>)/i);
+  const subCatSection = bodyHtml.match(
+    /Sub-Categories([\s\S]*?)(?:Published|<\/ul>|<\/td>|<\/table>)/i,
+  );
   if (subCatSection) {
-    const subMatches = subCatSection[1].matchAll(/<a[^>]*>([^<]+Logos)<\/a>/gi);
-    for (const m of subMatches) {
-      const cat = cleanText(m[1].replace(/\s*Logos\s*$/i, ''));
-      if (cat && cat !== main_category) secondary_categories.push(cat);
-    }
+    const subHtml = subCatSection[1];
+    const $sub = cheerio.load(subHtml);
+    $sub('a').each((_, el) => {
+      const txt = $sub(el).text().trim();
+      if (txt.endsWith('Logos')) {
+        const cat = cleanText(txt.replace(/\s*Logos\s*$/i, ''));
+        if (cat && cat !== main_category) {
+          secondary_categories.push(cat);
+        }
+      }
+    });
   }
 
   return {
@@ -110,11 +171,30 @@ function parseHTML(html: string, logogroundUrl: string): LogoGroundData {
     main_category,
     secondary_categories,
     logo_url,
-    logoground_url: logogroundUrl,
+    logoground_url,
   };
 }
 
-// ── Ambil HTML via Anthropic web_fetch server tool ────────────────────────────
+// ── Fetch HTML via axios (primary) ────────────────────────────────────────────
+async function fetchViaAxios(url: string): Promise<string> {
+  const res = await axios.get<string>(url, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' +
+        'AppleWebKit/537.36 (KHTML, like Gecko) ' +
+        'Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Referer': 'https://www.logoground.com/',
+    },
+    timeout: 20_000,
+    responseType: 'text',
+    maxRedirects: 5,
+  });
+  return res.data;
+}
+
+// ── Fetch HTML via Anthropic web_fetch (fallback) ─────────────────────────────
 async function fetchViaClaudeWebFetch(url: string): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY tidak ditemukan di env');
@@ -128,15 +208,9 @@ async function fetchViaClaudeWebFetch(url: string): Promise<string> {
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001', // model paling murah, cukup untuk fetch
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 8000,
-      tools: [
-        {
-          type: 'web_fetch_20250910',
-          name: 'web_fetch',
-          max_uses: 1,
-        },
-      ],
+      tools: [{ type: 'web_fetch_20250910', name: 'web_fetch', max_uses: 1 }],
       messages: [
         {
           role: 'user',
@@ -154,14 +228,12 @@ async function fetchViaClaudeWebFetch(url: string): Promise<string> {
 
   const data = await response.json();
 
-  // Kumpulkan semua text dari content blocks (termasuk web_fetch_tool_result)
   let html = '';
   for (const block of data.content ?? []) {
-    if (block.type === 'text' && block.text) {
-      html += block.text;
-    } else if (block.type === 'web_fetch_tool_result') {
-      // Hasil fetch ada di block.content.source.data
-      const fetched = block.content?.source?.data ?? block.content?.data ?? '';
+    if (block.type === 'text' && block.text) html += block.text;
+    else if (block.type === 'web_fetch_tool_result') {
+      const fetched =
+        block.content?.source?.data ?? block.content?.data ?? '';
       if (fetched) html += fetched;
     }
   }
@@ -170,6 +242,24 @@ async function fetchViaClaudeWebFetch(url: string): Promise<string> {
   return html;
 }
 
+// ── Main fetch dengan fallback ─────────────────────────────────────────────────
+async function fetchHTML(url: string): Promise<{ html: string; method: string }> {
+  // Primary: axios langsung (lebih cepat, gratis)
+  try {
+    const html = await fetchViaAxios(url);
+    if (html && html.includes('logoground')) {
+      return { html, method: 'axios' };
+    }
+  } catch (e) {
+    console.warn('[scrape-logoground] axios gagal, fallback ke Claude web_fetch:', e);
+  }
+
+  // Fallback: Anthropic web_fetch
+  const html = await fetchViaClaudeWebFetch(url);
+  return { html, method: 'claude-web-fetch' };
+}
+
+// ── GET handler ───────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   if (!checkAdmin(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -196,15 +286,14 @@ export async function GET(req: NextRequest) {
 
   try {
     const targetUrl = `https://www.logoground.com/logo.php?id=${logoId}`;
-
-    // Gunakan Anthropic web_fetch — sama persis seperti cara Claude.ai fetch halaman
-    const html = await fetchViaClaudeWebFetch(targetUrl);
+    const { html, method } = await fetchHTML(targetUrl);
 
     if (html.includes('Logo not found') || html.includes('does not exist')) {
       return NextResponse.json({ error: 'Logo tidak ditemukan di LogoGround' }, { status: 404 });
     }
 
-    const data = parseHTML(html, logogroundUrl);
+    // Parse dengan cheerio (lebih akurat dari regex)
+    const data = parseWithCheerio(html, logogroundUrl);
 
     if (!data.title) {
       return NextResponse.json(
@@ -213,7 +302,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    return NextResponse.json({ success: true, data });
+    return NextResponse.json({ success: true, data, _method: method });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('timeout') || msg.includes('TimeoutError')) {
