@@ -1,6 +1,5 @@
 'use client';
 import { useState } from "react";
-const [targetUrl, setTargetUrl] = useState("https://www.logoground.com/logo.php?id=961436");
 const SCRIPTS = {
   python_bs4: {
     label: "Python · requests + BeautifulSoup",
@@ -431,6 +430,7 @@ function OutputPanel({ output, status, error }: {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<keyof typeof SCRIPTS>("python_bs4");
+  const [targetUrl, setTargetUrl] = useState("https://www.logoground.com/logo.php?id=961436");
   const [states, setStates] = useState(
     Object.keys(SCRIPTS).reduce<Record<string, { status: "idle" | "loading" | "success" | "error"; output: Record<string, unknown> | null; error: string | null }>>(
       (a, k) => ({ ...a, [k]: { status: "idle", output: null, error: null } }), {}
