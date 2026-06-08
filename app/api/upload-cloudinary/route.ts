@@ -24,7 +24,7 @@ async function uploadBufferToCloudinary(
     .digest('hex');
 
   const fd = new FormData();
-  const blob = new Blob([buffer], { type: mimeType });
+  const blob = new Blob([new Uint8Array(buffer)], { type: mimeType });
   fd.append('file', blob, `upload_${timestamp}`);
   fd.append('api_key', apiKey);
   fd.append('timestamp', String(timestamp));
