@@ -450,7 +450,7 @@ export default function App() {
           messages: [
             {
               role: "user",
-              content: `Fetch and parse this URL: https://www.logoground.com/logo.php?id=961436
+              content: `Fetch and parse this URL: ${targetUrl}
               
 Extract and return ONLY a valid JSON object (no markdown, no explanation) with these exact keys:
 - title: page title
