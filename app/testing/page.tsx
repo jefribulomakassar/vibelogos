@@ -466,7 +466,7 @@ Return ONLY the JSON object.`,
       });
 
       const data = await response.json();
-      const raw = data.content?.map((c) => c.text || "").join("") || "";
+      const raw = data.content?.map((c: { text?: string }) => c.text || "").join("") || "";
       const clean = raw.replace(/```json|```/g, "").trim();
 
       let parsed;
