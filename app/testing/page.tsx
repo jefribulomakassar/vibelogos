@@ -1,8 +1,5 @@
-// app/testing/page.tsx
-import dynamic from "next/dynamic";
-
-const TestingPage = dynamic(() => import("./TestingClient"), { ssr: false });
+import DynamicLoader from "./DynamicLoader";
 
 export default function Page() {
-  return <TestingPage />;
+  return <DynamicLoader />;
 }
