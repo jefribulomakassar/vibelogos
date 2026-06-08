@@ -36,74 +36,59 @@ const SCENES = [
   },
 ];
 
-// ─── HuggingFace FLUX.1-dev — free ~300 req/hour ──────────────────────────────
-async function callHuggingFace(prompt: string): Promise<Buffer> {
-  const token = process.env.HF_TOKEN;
-  if (!token) throw new Error('HF_TOKEN not set');
+// ─── Gemini Image Generation (free tier, ~500 RPD) ────────────────────────────
+// Model: gemini-2.0-flash-preview-image-generation
+// Response: inlineData.data (base64 PNG)
+async function callGemini(prompt: string): Promise<Buffer> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY not set');
 
-  // Model options (fallback chain):
-  // 1. black-forest-labs/FLUX.1-schnell — lebih cepat, free
-  // 2. stabilityai/stable-diffusion-xl-base-1.0 — fallback
-  const models = [
-    'black-forest-labs/FLUX.1-schnell',
-    'black-forest-labs/FLUX.1-dev',
-    'stabilityai/stable-diffusion-xl-base-1.0',
-  ];
+  const url =
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-preview-image-generation:generateContent?key=${apiKey}`;
 
-  for (const model of models) {
-    try {
-      console.log(`[mockup] trying HF model: ${model}`);
-      const res = await fetch(
-        `https://api-inference.huggingface.co/models/${model}`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            'x-wait-for-model': 'true', // tunggu kalau model cold start
-          },
-          body: JSON.stringify({
-            inputs: prompt,
-            parameters: {
-              width: 1024,
-              height: 1024,
-              num_inference_steps: 4, // schnell optimal di 4 steps
-            },
-          }),
-          signal: AbortSignal.timeout(120_000),
-        }
-      );
+  const body = {
+    contents: [
+      {
+        parts: [{ text: prompt }],
+      },
+    ],
+    generationConfig: {
+      responseModalities: ['TEXT', 'IMAGE'],
+    },
+  };
 
-      if (!res.ok) {
-        const errText = await res.text();
-        // 503 = model loading, coba model berikutnya
-        // 429 = rate limit, throw langsung
-        if (res.status === 429) throw new Error(`HF rate limit 429: ${errText.slice(0, 200)}`);
-        throw new Error(`HF ${model} error ${res.status}: ${errText.slice(0, 200)}`);
-      }
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(120_000),
+  });
 
-      // Response langsung berupa binary image
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('image')) {
-        const text = await res.text();
-        throw new Error(`HF returned non-image: ${text.slice(0, 200)}`);
-      }
-
-      const buffer = Buffer.from(await res.arrayBuffer());
-      if (buffer.length < 1000) throw new Error(`HF returned empty image (${buffer.length} bytes)`);
-
-      console.log(`[mockup] ✓ HF ${model} OK, size=${buffer.length}`);
-      return buffer;
-
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      // Rate limit — stop mencoba
-      if (msg.includes('429')) throw new Error(msg);
-      console.warn(`[mockup] HF ${model} failed: ${msg.slice(0, 100)}, trying next...`);
-    }
+  if (!res.ok) {
+    const errText = await res.text();
+    // 429 = rate limit, lempar langsung tanpa retry
+    if (res.status === 429) throw new Error(`Gemini rate limit 429: ${errText.slice(0, 300)}`);
+    throw new Error(`Gemini error ${res.status}: ${errText.slice(0, 300)}`);
   }
 
-  throw new Error('All HuggingFace models failed');
+  const json = await res.json();
+
+  // Cari part yang berisi inlineData (image)
+  const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> =
+    json?.candidates?.[0]?.content?.parts ?? [];
+
+  const imagePart = parts.find((p) => p.inlineData?.data);
+  if (!imagePart?.inlineData?.data) {
+    // Log response untuk debug
+    console.error('[mockup] Gemini response (no image):', JSON.stringify(json).slice(0, 500));
+    throw new Error('Gemini returned no image data');
+  }
+
+  const buffer = Buffer.from(imagePart.inlineData.data, 'base64');
+  if (buffer.length < 1000) throw new Error(`Gemini returned empty image (${buffer.length} bytes)`);
+
+  console.log(`[mockup] ✓ Gemini OK, size=${buffer.length}, mime=${imagePart.inlineData.mimeType}`);
+  return buffer;
 }
 
 // ─── Upload Buffer → Cloudinary ───────────────────────────────────────────────
@@ -154,12 +139,14 @@ async function generateScene(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       console.log(`[mockup] scene=${sceneConfig.scene} attempt=${attempt}`);
-      const imgBuffer = await callHuggingFace(prompt);
+      const imgBuffer = await callGemini(prompt);
       const cloudUrl  = await uploadBufferToCloudinary(imgBuffer);
       return { scene: sceneConfig.scene, label: sceneConfig.label, url: cloudUrl };
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.warn(`[mockup] scene=${sceneConfig.scene} att=${attempt}: ${msg.slice(0, 150)}`);
+      // Rate limit — stop langsung
+      if (msg.includes('429')) throw new Error(msg);
       if (attempt < maxAttempts) await sleep(5_000);
       else throw new Error(msg);
     }
@@ -184,8 +171,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'logo_url is required' }, { status: 400 });
   }
 
-  if (!process.env.HF_TOKEN) {
-    return NextResponse.json({ error: 'HF_TOKEN env var not set' }, { status: 500 });
+  if (!process.env.GEMINI_API_KEY) {
+    return NextResponse.json({ error: 'GEMINI_API_KEY env var not set' }, { status: 500 });
   }
 
   if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
@@ -203,12 +190,13 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       console.error(`[mockup] scene skipped (${scene.scene}):`, e instanceof Error ? e.message : e);
     }
-    if (i < SCENES.length - 1) await sleep(3_000);
+    // Delay antar scene — hindari rate limit (Gemini free ~2 RPM burst)
+    if (i < SCENES.length - 1) await sleep(4_000);
   }
 
   if (results.length === 0) {
     return NextResponse.json(
-      { error: 'Semua scene gagal. Cek HF_TOKEN di Vercel env vars.' },
+      { error: 'Semua scene gagal. Cek GEMINI_API_KEY di Vercel env vars, atau quota habis.' },
       { status: 502 },
     );
   }
