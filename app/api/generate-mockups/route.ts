@@ -37,14 +37,14 @@ const SCENES = [
 ];
 
 // ─── Gemini Image Generation (free tier, ~500 RPD) ────────────────────────────
-// Model: gemini-2.0-flash-preview-image-generation
+// Model: gemini-2.5-flash-image (Nano Banana) — model aktif per 2026
 // Response: inlineData.data (base64 PNG)
 async function callGemini(prompt: string): Promise<Buffer> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY not set');
 
   const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-preview-image-generation:generateContent?key=${apiKey}`;
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${apiKey}`;
 
   const body = {
     contents: [
