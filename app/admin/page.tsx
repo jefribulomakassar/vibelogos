@@ -37,11 +37,9 @@ async function uploadToCloudinary(
 }
 
 // ─── Upload image from external URL → Cloudinary (via server proxy) ──────────
-// LogoGround image URL di-fetch server-side dulu (hindari CORS), lalu upload ke Cloudinary
 async function uploadUrlToCloudinary(
   imageUrl: string, folder: string, adminToken: string,
 ): Promise<string> {
-  // Minta server proxy download + upload ke Cloudinary
   const res = await fetch('/api/upload-cloudinary', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
@@ -108,14 +106,12 @@ function LogoGroundImporter({ adminToken, onImport, defaultUrl = '' }: LogoGroun
     }
   };
 
-  // Import semua data — logo tetap pakai URL LogoGround langsung dulu
   const handleImportDirect = () => {
     if (!preview) return;
     onImport(preview);
     setImported(true);
   };
 
-  // Import + upload logo ke Cloudinary dulu
   const handleImportWithUpload = async () => {
     if (!preview) return;
     setUploadingImg(true);
@@ -142,7 +138,6 @@ function LogoGroundImporter({ adminToken, onImport, defaultUrl = '' }: LogoGroun
       flexDirection: 'column',
       gap: 14,
     }}>
-      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{
           width: 32, height: 32, borderRadius: 8,
@@ -161,7 +156,6 @@ function LogoGroundImporter({ adminToken, onImport, defaultUrl = '' }: LogoGroun
         </div>
       </div>
 
-      {/* URL Input */}
       <div style={{ display: 'flex', gap: 8 }}>
         <input
           type="text"
@@ -198,28 +192,23 @@ function LogoGroundImporter({ adminToken, onImport, defaultUrl = '' }: LogoGroun
         </button>
       </div>
 
-      {/* Error */}
       {error && (
         <div style={{ background: 'rgba(255,68,68,0.08)', border: '1px solid rgba(255,68,68,0.25)', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#ff6b6b', display: 'flex', gap: 6 }}>
           ⚠️ {error}
         </div>
       )}
 
-      {/* Success imported badge */}
       {imported && !error && (
         <div style={{ background: 'rgba(200,245,66,0.1)', border: '1px solid rgba(200,245,66,0.3)', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: 'var(--accent)', display: 'flex', gap: 6, alignItems: 'center' }}>
           ✓ Data berhasil diimport ke form!
         </div>
       )}
 
-      {/* Preview Card */}
       {preview && (
         <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {/* Logo + Info */}
           <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
             {preview.logo_url && (
               <div style={{ width: 72, height: 72, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg)', flexShrink: 0, position: 'relative', overflow: 'hidden' }}>
-                {/* Gunakan <img> biasa karena domain eksternal */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={preview.logo_url}
@@ -247,7 +236,6 @@ function LogoGroundImporter({ adminToken, onImport, defaultUrl = '' }: LogoGroun
             </div>
           </div>
 
-          {/* Preview Fields */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {preview.description && (
               <div>
@@ -272,9 +260,7 @@ function LogoGroundImporter({ adminToken, onImport, defaultUrl = '' }: LogoGroun
             )}
           </div>
 
-          {/* Import Buttons */}
           <div style={{ display: 'flex', gap: 8, paddingTop: 4, borderTop: '1px solid var(--border)' }}>
-            {/* Opsi 1: Import data saja, logo dari URL LogoGround langsung */}
             <button
               onClick={handleImportDirect}
               disabled={isLoading}
@@ -287,8 +273,6 @@ function LogoGroundImporter({ adminToken, onImport, defaultUrl = '' }: LogoGroun
             >
               📋 Import Data + Logo URL
             </button>
-
-            {/* Opsi 2: Import + upload logo ke Cloudinary */}
             <button
               onClick={handleImportWithUpload}
               disabled={isLoading}
@@ -318,7 +302,7 @@ function LogoGroundImporter({ adminToken, onImport, defaultUrl = '' }: LogoGroun
   );
 }
 
-// ─── Logo Upload Zone (updated — dua mode: upload file ATAU load dari URL) ────
+// ─── Logo Upload Zone ─────────────────────────────────────────────────────────
 function LogoUploadZone({ value, onChange, adminToken }: {
   value: string; onChange: (url: string) => void; adminToken: string;
 }) {
@@ -340,7 +324,6 @@ function LogoUploadZone({ value, onChange, adminToken }: {
     } finally { setUploading(false); setProgress(0); }
   }, [adminToken, onChange]);
 
-  // Load gambar dari URL eksternal (termasuk LogoGround) → upload ke Cloudinary
   const handleLoadFromUrl = async () => {
     const trimmed = externalUrl.trim();
     if (!trimmed) return;
@@ -360,7 +343,6 @@ function LogoUploadZone({ value, onChange, adminToken }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <label style={labelStyle}>Logo Image *</label>
-        {/* Mode toggle */}
         <div style={{ display: 'flex', background: 'var(--bg3)', borderRadius: 6, padding: 2, gap: 2 }}>
           {(['upload', 'url'] as const).map(m => (
             <button
@@ -379,7 +361,6 @@ function LogoUploadZone({ value, onChange, adminToken }: {
         </div>
       </div>
 
-      {/* Preview gambar terpilih */}
       {value && (
         <div style={{ position: 'relative', width: 100, height: 100 }}>
           <Image src={value} alt="logo" fill sizes="100px" style={{ objectFit: 'contain', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg3)', padding: 8 }} />
@@ -387,7 +368,6 @@ function LogoUploadZone({ value, onChange, adminToken }: {
         </div>
       )}
 
-      {/* Mode: Upload File */}
       {mode === 'upload' && (
         <>
           <div
@@ -416,7 +396,6 @@ function LogoUploadZone({ value, onChange, adminToken }: {
         </>
       )}
 
-      {/* Mode: Load dari URL */}
       {mode === 'url' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ display: 'flex', gap: 6 }}>
@@ -471,11 +450,17 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
   logoUrl: string; title: string; category: string;
   adminToken: string; mockups: string[]; onMockupsChange: (urls: string[]) => void;
 }) {
+  const [activeTab, setActiveTab] = useState<'ai' | 'upload'>('ai');
   const [generating, setGenerating] = useState(false);
   const [results, setResults] = useState<MockupResult[]>([]);
   const [stepIdx, setStepIdx] = useState(0);
   const [error, setError] = useState('');
   const stepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Upload manual state
+  const [dragging, setDragging] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
+  const uploadInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (mockups.length > 0 && results.length === 0) {
@@ -498,13 +483,13 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
     }
   };
 
+  // ── AI Generate ────────────────────────────────────────────────────────────
   const generate = async () => {
     if (!logoUrl) { alert('Upload logo dulu sebelum generate mockup!'); return; }
     setGenerating(true);
     setError('');
     setResults([]);
     startStepTimer();
-
     try {
       const res = await fetch('/api/generate-mockups', {
         method: 'POST',
@@ -513,8 +498,9 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed');
-      setResults(data.mockups || []);
-      onMockupsChange((data.mockups as MockupResult[]).map(m => m.url));
+      const newResults: MockupResult[] = data.mockups || [];
+      setResults(newResults);
+      onMockupsChange(newResults.map(m => m.url));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -524,78 +510,231 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
     }
   };
 
+  // ── Upload Manual: multiple files ──────────────────────────────────────────
+  const handleManualFiles = async (files: FileList | File[]) => {
+    const arr = Array.from(files).filter(f => f.type.startsWith('image/'));
+    if (arr.length === 0) return;
+
+    const newResults: MockupResult[] = [...results];
+
+    for (const file of arr) {
+      const key = file.name + Date.now();
+      setUploadProgress(prev => ({ ...prev, [key]: 0 }));
+      try {
+        const url = await uploadToCloudinary(
+          file,
+          'vibelogos/mockups',
+          adminToken,
+          (pct) => setUploadProgress(prev => ({ ...prev, [key]: pct }))
+        );
+        const idx = newResults.length;
+        newResults.push({ scene: `manual_${idx}`, label: file.name.replace(/\.[^/.]+$/, ''), url });
+        setResults([...newResults]);
+        onMockupsChange(newResults.map(r => r.url));
+      } catch (e: unknown) {
+        alert(`Gagal upload ${file.name}: ` + (e instanceof Error ? e.message : String(e)));
+      } finally {
+        setUploadProgress(prev => { const n = { ...prev }; delete n[key]; return n; });
+      }
+    }
+  };
+
   const removeResult = (i: number) => {
     const next = results.filter((_, j) => j !== i);
     setResults(next);
     onMockupsChange(next.map(r => r.url));
   };
 
+  const updateLabel = (i: number, label: string) => {
+    setResults(prev => prev.map((r, j) => j === i ? { ...r, label } : r));
+  };
+
+  const isUploadingManual = Object.keys(uploadProgress).length > 0;
+
+  const tabBtn = (tab: 'ai' | 'upload'): React.CSSProperties => ({
+    flex: 1, padding: '9px 12px', borderRadius: 8, border: 'none', fontSize: 12,
+    fontFamily: 'Syne, sans-serif', fontWeight: 700, cursor: 'pointer', transition: 'all 0.15s',
+    background: activeTab === tab ? 'rgba(200,245,66,0.12)' : 'transparent',
+    color: activeTab === tab ? 'var(--accent)' : '#555',
+    borderBottom: activeTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
+  });
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <label style={labelStyle}>Mockup Images</label>
-        <span style={{ fontSize: 11, color: '#555' }}>Powered by Gemini 2.0 Flash</span>
+        {results.length > 0 && (
+          <span style={{ fontSize: 11, color: 'var(--muted)' }}>{results.length} gambar</span>
+        )}
       </div>
 
-      {!generating && logoUrl && (
-        <div style={{ background: 'rgba(200,245,66,0.06)', border: '1px solid rgba(200,245,66,0.15)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
-          ⏱️ Estimasi ~1–2 menit untuk 3 scene mockup
-        </div>
-      )}
+      {/* Tab Bar */}
+      <div style={{
+        display: 'flex', background: 'var(--bg3)', border: '1px solid var(--border)',
+        borderRadius: 10, padding: 4, gap: 4,
+      }}>
+        <button style={tabBtn('ai')} onClick={() => setActiveTab('ai')}>✨ AI Generate</button>
+        <button style={tabBtn('upload')} onClick={() => setActiveTab('upload')}>📁 Upload Manual</button>
+      </div>
 
-      <button
-        onClick={generate}
-        disabled={generating || !logoUrl}
-        style={{
-          padding: '14px 20px', borderRadius: 10, border: '2px solid',
-          borderColor: generating ? 'var(--border)' : logoUrl ? 'var(--accent)' : 'var(--border)',
-          background: generating ? 'var(--bg3)' : logoUrl ? 'rgba(200,245,66,0.08)' : 'var(--bg3)',
-          color: logoUrl && !generating ? 'var(--accent)' : 'var(--muted)',
-          cursor: generating || !logoUrl ? 'not-allowed' : 'pointer',
-          fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: 14,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-          transition: 'all 0.2s',
-        }}
-      >
-        {generating ? (
-          <>
-            <span style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid var(--muted)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-            {STEP_MESSAGES[stepIdx]}
-          </>
-        ) : (
-          <>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-            </svg>
-            {results.length > 0 ? '🔄 Regenerate Mockups' : '✨ Generate AI Mockups'}
-          </>
-        )}
-      </button>
+      {/* ── Tab: AI Generate ───────────────────────────────────────────────── */}
+      {activeTab === 'ai' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ fontSize: 11, color: '#555' }}>Powered by Gemini 2.0 Flash</div>
 
-      {!logoUrl && (
-        <p style={{ fontSize: 12, color: '#555', textAlign: 'center' }}>Upload logo terlebih dahulu untuk generate mockup</p>
-      )}
-
-      {error && (
-        <div style={{ background: 'rgba(255,68,68,0.1)', border: '1px solid rgba(255,68,68,0.3)', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#ff6b6b' }}>
-          ⚠️ {error}
-        </div>
-      )}
-
-      {results.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
-          {results.map((r, i) => (
-            <div key={i} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--bg3)', aspectRatio: '1' }}>
-              <Image src={r.url} alt={r.label} fill sizes="200px" unoptimized style={{ objectFit: 'cover' }} />
-              <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '8px 10px', background: 'linear-gradient(transparent, rgba(0,0,0,0.8))', fontSize: 11, fontWeight: 600, fontFamily: 'Syne, sans-serif' }}>
-                {r.label}
-              </div>
-              <button
-                onClick={() => removeResult(i)}
-                style={{ position: 'absolute', top: 6, right: 6, width: 22, height: 22, borderRadius: '50%', background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-              >✕</button>
+          {!generating && logoUrl && (
+            <div style={{ background: 'rgba(200,245,66,0.06)', border: '1px solid rgba(200,245,66,0.15)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              ⏱️ Estimasi ~1–2 menit untuk 3 scene mockup
             </div>
-          ))}
+          )}
+
+          <button
+            onClick={generate}
+            disabled={generating || !logoUrl}
+            style={{
+              padding: '14px 20px', borderRadius: 10, border: '2px solid',
+              borderColor: generating ? 'var(--border)' : logoUrl ? 'var(--accent)' : 'var(--border)',
+              background: generating ? 'var(--bg3)' : logoUrl ? 'rgba(200,245,66,0.08)' : 'var(--bg3)',
+              color: logoUrl && !generating ? 'var(--accent)' : 'var(--muted)',
+              cursor: generating || !logoUrl ? 'not-allowed' : 'pointer',
+              fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: 14,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+              transition: 'all 0.2s',
+            }}
+          >
+            {generating ? (
+              <>
+                <span style={{ display: 'inline-block', width: 16, height: 16, border: '2px solid var(--muted)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                {STEP_MESSAGES[stepIdx]}
+              </>
+            ) : (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                </svg>
+                {results.length > 0 ? '🔄 Regenerate Mockups' : '✨ Generate AI Mockups'}
+              </>
+            )}
+          </button>
+
+          {!logoUrl && (
+            <p style={{ fontSize: 12, color: '#555', textAlign: 'center' }}>Upload logo terlebih dahulu untuk generate mockup</p>
+          )}
+
+          {error && (
+            <div style={{ background: 'rgba(255,68,68,0.1)', border: '1px solid rgba(255,68,68,0.3)', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#ff6b6b' }}>
+              ⚠️ {error}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Tab: Upload Manual ─────────────────────────────────────────────── */}
+      {activeTab === 'upload' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div
+            onClick={() => !isUploadingManual && uploadInputRef.current?.click()}
+            onDragOver={e => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={e => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files.length) handleManualFiles(e.dataTransfer.files); }}
+            style={{
+              border: `2px dashed ${dragging ? 'var(--accent)' : 'rgba(200,245,66,0.25)'}`,
+              borderRadius: 12, padding: '28px 20px', textAlign: 'center',
+              cursor: isUploadingManual ? 'default' : 'pointer', transition: 'all 0.2s',
+              background: dragging ? 'rgba(200,245,66,0.04)' : 'transparent',
+            }}
+          >
+            {isUploadingManual ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                <span style={{ display: 'inline-block', width: 24, height: 24, border: '3px solid rgba(200,245,66,0.3)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                <span style={{ fontSize: 13, color: 'var(--muted)' }}>
+                  Uploading {Object.keys(uploadProgress).length} file…
+                </span>
+                <div style={{ width: '100%', maxWidth: 260, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {Object.entries(uploadProgress).map(([key, pct]) => (
+                    <div key={key}>
+                      <div style={{ fontSize: 11, color: '#555', marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {key.replace(/\d+$/, '')}
+                      </div>
+                      <div style={{ height: 4, background: 'var(--border)', borderRadius: 2 }}>
+                        <div style={{ height: '100%', width: `${pct}%`, background: 'var(--accent)', borderRadius: 2, transition: 'width 0.2s' }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 28, marginBottom: 8 }}>🖼️</div>
+                <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 4 }}>
+                  Drop multiple mockup images atau <span style={{ color: 'var(--accent)' }}>klik untuk pilih</span>
+                </p>
+                <p style={{ fontSize: 11, color: '#555' }}>PNG, JPG, WEBP · Bisa pilih banyak sekaligus</p>
+              </>
+            )}
+          </div>
+          <input
+            ref={uploadInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: 'none' }}
+            onChange={e => { if (e.target.files?.length) handleManualFiles(e.target.files); e.target.value = ''; }}
+          />
+          <p style={{ fontSize: 11, color: '#555', margin: 0 }}>
+            💡 Hasil upload akan bergabung dengan mockup yang sudah ada di grid bawah.
+          </p>
+        </div>
+      )}
+
+      {/* ── Mockup Grid — shared, tampil di kedua tab ──────────────────────── */}
+      {results.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              Semua Mockup ({results.length})
+            </span>
+            <button
+              onClick={() => { setResults([]); onMockupsChange([]); }}
+              style={{ fontSize: 11, color: '#ff6b6b', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px' }}
+            >
+              Hapus Semua
+            </button>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+            {results.map((r, i) => (
+              <div key={i} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--bg3)', aspectRatio: '1', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ flex: 1, position: 'relative' }}>
+                  <Image src={r.url} alt={r.label} fill sizes="200px" unoptimized style={{ objectFit: 'cover' }} />
+                </div>
+                {/* Label editable */}
+                <div style={{ padding: '6px 8px', background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}>
+                  <input
+                    type="text"
+                    value={r.label}
+                    onChange={e => updateLabel(i, e.target.value)}
+                    style={{
+                      background: 'transparent', border: 'none', outline: 'none',
+                      fontSize: 11, fontWeight: 600, fontFamily: 'Syne, sans-serif',
+                      color: '#fff', width: '100%', padding: 0,
+                    }}
+                  />
+                </div>
+                {/* Remove */}
+                <button
+                  onClick={() => removeResult(i)}
+                  style={{ position: 'absolute', top: 6, right: 6, width: 22, height: 22, borderRadius: '50%', background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                >✕</button>
+                {/* Source badge */}
+                <div style={{ position: 'absolute', top: 6, left: 6, fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'rgba(0,0,0,0.6)', color: r.scene.startsWith('manual') ? '#aaa' : 'var(--accent)', fontWeight: 600 }}>
+                  {r.scene.startsWith('manual') ? '📁' : '✨ AI'}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -706,7 +845,6 @@ export default function AdminPage() {
     setShowForm(true);
   };
 
-  // ── Handle import dari LogoGround ─────────────────────────────────────────
   const handleLogoGroundImport = (data: LogoGroundData & { cloudinary_logo_url?: string }) => {
     setForm(prev => ({
       ...prev,
@@ -718,7 +856,6 @@ export default function AdminPage() {
       secondary_categories: data.secondary_categories.length > 0
         ? data.secondary_categories.join(', ')
         : prev.secondary_categories,
-      // Gunakan Cloudinary URL jika ada, fallback ke URL LogoGround
       logo_url: data.cloudinary_logo_url || data.logo_url || prev.logo_url,
       logoground_url: data.logoground_url || prev.logoground_url,
     }));
@@ -881,21 +1018,18 @@ export default function AdminPage() {
 
             <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-              {/* ── LogoGround Importer — tampil di atas form ── */}
               <LogoGroundImporter
                 adminToken={token}
                 onImport={handleLogoGroundImport}
                 defaultUrl={form.logoground_url}
               />
 
-              {/* Divider */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
                 <span style={{ fontSize: 11, color: '#555', flexShrink: 0 }}>atau isi manual</span>
                 <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
               </div>
 
-              {/* Title + Price */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px', gap: 16 }}>
                 <div>
                   <label style={labelStyle}>Title *</label>
@@ -907,13 +1041,11 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              {/* Description */}
               <div>
                 <label style={labelStyle}>Description</label>
                 <textarea value={form.description} onChange={f('description')} placeholder="Deskripsi singkat logo ini..." rows={3} style={{ ...inputStyle, marginTop: 6, resize: 'vertical' }} />
               </div>
 
-              {/* Categories */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                 <div>
                   <label style={labelStyle}>Main Category *</label>
@@ -925,13 +1057,11 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              {/* Keywords */}
               <div>
                 <label style={labelStyle}>Keywords</label>
                 <input type="text" placeholder="modern, minimal, tech (comma-separated)" value={form.keywords} onChange={f('keywords')} style={{ ...inputStyle, marginTop: 6 }} />
               </div>
 
-              {/* Logo Upload (dua mode: upload file / load dari URL) */}
               <LogoUploadZone
                 value={form.logo_url}
                 onChange={url => setForm(p => ({ ...p, logo_url: url }))}
@@ -940,7 +1070,6 @@ export default function AdminPage() {
 
               <div style={{ borderTop: '1px solid var(--border)', paddingTop: 4 }} />
 
-              {/* AI Mockup Generator */}
               <AIMockupGenerator
                 logoUrl={form.logo_url}
                 title={form.title}
@@ -950,7 +1079,6 @@ export default function AdminPage() {
                 onMockupsChange={urls => setForm(p => ({ ...p, mockups: urls }))}
               />
 
-              {/* LogoGround + Account */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                 <div>
                   <label style={labelStyle}>LogoGround URL</label>
@@ -962,7 +1090,6 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              {/* Actions */}
               <div style={{ display: 'flex', gap: 10, paddingTop: 4 }}>
                 <button onClick={() => setShowForm(false)} style={{ flex: 1, padding: '12px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text)', cursor: 'pointer', fontFamily: 'DM Sans, sans-serif', fontSize: 15 }}>Batal</button>
                 <button onClick={handleSave} disabled={saving} className="btn-primary" style={{ flex: 2, justifyContent: 'center', fontSize: 15, padding: 12, opacity: saving ? 0.7 : 1 }}>
