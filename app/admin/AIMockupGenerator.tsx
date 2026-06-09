@@ -1,7 +1,8 @@
 // ─── AI Mockup Generator ──────────────────────────────────────────────────────
 // PATH: components/admin/AIMockupGenerator.tsx  (atau inline di page admin)
 // Perubahan: tambah tab "Upload Manual" untuk unggah mockup images secara multiple
-
+import { useState, useEffect, useRef, useCallback } from 'react';
+import Image from 'next/image';
 interface MockupResult { scene: string; label: string; url: string; }
 
 const STEP_MESSAGES = [
