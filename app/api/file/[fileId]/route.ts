@@ -4,14 +4,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { downloadFromDrive } from '@/lib/google-drive';
 
-// Cache 1 jam di browser, 24 jam di CDN Vercel Edge
 const CACHE_CONTROL = 'public, max-age=3600, s-maxage=86400, stale-while-revalidate=86400';
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { fileId: string } }
+  { params }: { params: Promise<{ fileId: string }> }
 ) {
-  const { fileId } = params;
+  const { fileId } = await params;
   if (!fileId) return NextResponse.json({ error: 'fileId required' }, { status: 400 });
 
   try {
