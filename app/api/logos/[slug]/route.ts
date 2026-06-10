@@ -5,8 +5,9 @@ export const runtime = 'edge';
 
 export async function GET(
   _req: Request,
-  { params }: { params: { slug: string } }
+  { params }: { params: Promise<{ slug: string }> }
 ) {
+  const { slug } = await params;
   try {
     const result = await turso.execute({
       sql: `SELECT id, slug, title, description, keywords, price,
@@ -15,7 +16,7 @@ export async function GET(
             FROM logos
             WHERE slug = ?
             LIMIT 1`,
-      args: [params.slug],
+      args: [slug],
     });
 
     if (result.rows.length === 0) {
