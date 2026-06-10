@@ -880,17 +880,40 @@ export default function AdminPage() {
         { method: editId ? 'PUT' : 'POST', headers: getHeaders(), body: JSON.stringify(payload) }
       );
       if (!res.ok) throw new Error(await res.text());
+      const saved = await res.json(); // ← ambil data returned dari API
+  
+      // Optimistic: langsung update state tanpa tunggu fetchLogos
+      if (editId) {
+        setLogos(prev => prev.map(l => l.id === editId ? { ...l, ...payload, id: editId, slug: l.slug } : l));
+      } else {
+        // saved.logo berisi data dengan id & slug dari DB
+        if (saved?.logo) setLogos(prev => [saved.logo, ...prev]);
+      }
+  
       showToast(editId ? '✓ Logo diupdate!' : '✓ Logo ditambahkan!');
-      setShowForm(false); await fetchLogos();
+      setShowForm(false);
+  
+      // Background refetch untuk sync (tanpa blocking UI)
+      fetchLogos();
     } catch (e: unknown) {
       alert('Error: ' + (e instanceof Error ? e.message : String(e)));
     } finally { setSaving(false); }
   };
-
+  
+  // ── Optimistic delete ─────────────────────────────────────────────────────────
   const handleDelete = async (id: number) => {
-    const res = await fetch(`/api/logos-data/${id}`, { method: 'DELETE', headers: getHeaders() });
-    if (res.ok) { showToast('🗑 Logo dihapus'); fetchLogos(); }
+    // Optimistic: hapus dari state dulu
+    setLogos(prev => prev.filter(l => l.id !== id));
     setDeleteId(null);
+  
+    const res = await fetch(`/api/logos-data/${id}`, { method: 'DELETE', headers: getHeaders() });
+    if (res.ok) {
+      showToast('🗑 Logo dihapus');
+    } else {
+      // Rollback kalau gagal
+      showToast('⚠️ Hapus gagal, reload...');
+      await fetchLogos(); // refetch untuk restore state
+    }
   };
 
   const f = (field: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
