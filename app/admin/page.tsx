@@ -1,62 +1,65 @@
 'use client';
 
 // app/admin/page.tsx
+// Upload logo & mockup → Google Drive (Service Account)
+// Simpan metadata → Turso via /api/logos-data
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Image from 'next/image';
 import type { Logo } from '@/lib/types';
 
-// ─── Cloudinary Upload Helper ────────────────────────────────────────────────
-async function uploadToCloudinary(
-  file: File, folder: string, adminToken: string,
-  onProgress?: (pct: number) => void
-): Promise<string> {
-  const sigRes = await fetch('/api/upload-cloudinary', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
-    body: JSON.stringify({ folder }),
-  });
-  if (!sigRes.ok) throw new Error(`Signature request failed (${sigRes.status})`);
-  const { signature, timestamp, apiKey, cloudName } = await sigRes.json();
-  if (!cloudName) throw new Error('cloudName kosong dari server — cek NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME di Vercel');
+// ─── Google Drive Upload Helpers ─────────────────────────────────────────────
 
+/** Upload File object → Google Drive, return viewUrl */
+async function uploadToGDrive(
+  file: File,
+  folder: 'logos' | 'mockups',
+  adminToken: string,
+  onProgress?: (pct: number) => void,
+): Promise<string> {
   const fd = new FormData();
   fd.append('file', file);
-  fd.append('api_key', apiKey);
-  fd.append('timestamp', String(timestamp));
-  fd.append('signature', signature);
   fd.append('folder', folder);
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`);
-    xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress?.(Math.round(e.loaded / e.total * 100)); };
+    xhr.open('POST', '/api/upload-gdrive');
+    xhr.setRequestHeader('x-admin-token', adminToken);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(Math.round((e.loaded / e.total) * 100));
+    };
     xhr.onload = () => {
-      const d = JSON.parse(xhr.responseText);
-      if (d.secure_url) resolve(d.secure_url);
-      else reject(new Error(d.error?.message || 'Upload failed'));
+      try {
+        const d = JSON.parse(xhr.responseText);
+        if (d.viewUrl || d.secure_url) resolve(d.viewUrl ?? d.secure_url);
+        else reject(new Error(d.error || 'Upload ke Drive gagal'));
+      } catch {
+        reject(new Error('Response parse error'));
+      }
     };
     xhr.onerror = () => reject(new Error('Network error'));
     xhr.send(fd);
   });
 }
 
-// ─── Upload image from external URL → Cloudinary (via server proxy) ──────────
-async function uploadUrlToCloudinary(
-  imageUrl: string, folder: string, adminToken: string,
+/** Upload dari external URL → Google Drive via server proxy */
+async function uploadUrlToGDrive(
+  imageUrl: string,
+  folder: 'logos' | 'mockups',
+  adminToken: string,
 ): Promise<string> {
-  const res = await fetch('/api/upload-cloudinary', {
+  const res = await fetch('/api/upload-gdrive', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
-    body: JSON.stringify({ folder, external_url: imageUrl }),
+    body: JSON.stringify({ external_url: imageUrl, folder }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error || `Upload from URL failed (${res.status})`);
+    throw new Error(err?.error || `Upload dari URL gagal (${res.status})`);
   }
   const data = await res.json();
-  if (data.secure_url) return data.secure_url as string;
-  throw new Error(data.error || 'Upload from URL failed');
+  if (data.viewUrl || data.secure_url) return data.viewUrl ?? data.secure_url;
+  throw new Error(data.error || 'Upload dari URL gagal');
 }
 
 // ─── LogoGround Importer ──────────────────────────────────────────────────────
@@ -73,7 +76,7 @@ interface LogoGroundData {
 
 interface LogoGroundImporterProps {
   adminToken: string;
-  onImport: (data: LogoGroundData & { cloudinary_logo_url?: string }) => void;
+  onImport: (data: LogoGroundData & { gdrive_logo_url?: string }) => void;
   defaultUrl?: string;
 }
 
@@ -116,11 +119,11 @@ function LogoGroundImporter({ adminToken, onImport, defaultUrl = '' }: LogoGroun
     if (!preview) return;
     setUploadingImg(true);
     try {
-      const cloudUrl = await uploadUrlToCloudinary(preview.logo_url, 'vibelogos/logos', adminToken);
-      onImport({ ...preview, cloudinary_logo_url: cloudUrl });
+      const driveUrl = await uploadUrlToGDrive(preview.logo_url, 'logos', adminToken);
+      onImport({ ...preview, gdrive_logo_url: driveUrl });
       setImported(true);
     } catch (e: unknown) {
-      setError('Upload logo ke Cloudinary gagal: ' + (e instanceof Error ? e.message : String(e)));
+      setError('Upload logo ke Drive gagal: ' + (e instanceof Error ? e.message : String(e)));
     } finally { setUploadingImg(false); }
   };
 
@@ -215,11 +218,11 @@ function LogoGroundImporter({ adminToken, onImport, defaultUrl = '' }: LogoGroun
             <button onClick={handleImportDirect} disabled={isLoading} style={{ flex: 1, padding: '10px 12px', borderRadius: 8, fontSize: 12, fontFamily: 'Syne, sans-serif', fontWeight: 600, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text)', cursor: isLoading ? 'not-allowed' : 'pointer', transition: 'all 0.2s' }} title="Logo pakai URL LogoGround langsung">
               📋 Import Data + Logo URL
             </button>
-            <button onClick={handleImportWithUpload} disabled={isLoading} style={{ flex: 1, padding: '10px 12px', borderRadius: 8, fontSize: 12, fontFamily: 'Syne, sans-serif', fontWeight: 700, background: 'rgba(200,245,66,0.1)', border: '1px solid rgba(200,245,66,0.3)', color: 'var(--accent)', cursor: isLoading ? 'not-allowed' : 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} title="Upload logo ke Cloudinary dulu">
-              {uploadingImg ? (<><span style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid rgba(200,245,66,0.3)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />Uploading…</>) : '☁️ Import + Upload ke Cloudinary'}
+            <button onClick={handleImportWithUpload} disabled={isLoading} style={{ flex: 1, padding: '10px 12px', borderRadius: 8, fontSize: 12, fontFamily: 'Syne, sans-serif', fontWeight: 700, background: 'rgba(200,245,66,0.1)', border: '1px solid rgba(200,245,66,0.3)', color: 'var(--accent)', cursor: isLoading ? 'not-allowed' : 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} title="Upload logo ke Google Drive dulu">
+              {uploadingImg ? (<><span style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid rgba(200,245,66,0.3)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />Uploading…</>) : '📂 Import + Upload ke Drive'}
             </button>
           </div>
-          <p style={{ fontSize: 11, color: '#555', margin: 0 }}>💡 <strong>"Import Data + Logo URL"</strong> = cepat. <strong>"Upload ke Cloudinary"</strong> = lebih aman & permanen.</p>
+          <p style={{ fontSize: 11, color: '#555', margin: 0 }}>💡 <strong>"Import Data + Logo URL"</strong> = cepat. <strong>"Upload ke Drive"</strong> = simpan permanen di Google Drive kamu.</p>
         </div>
       )}
     </div>
@@ -241,7 +244,7 @@ function LogoUploadZone({ value, onChange, adminToken }: {
   const handleFile = useCallback(async (file: File) => {
     setUploading(true);
     try {
-      const url = await uploadToCloudinary(file, 'vibelogos/logos', adminToken, setProgress);
+      const url = await uploadToGDrive(file, 'logos', adminToken, setProgress);
       onChange(url);
     } catch (e: unknown) {
       alert('Upload error: ' + (e instanceof Error ? e.message : String(e)));
@@ -253,8 +256,8 @@ function LogoUploadZone({ value, onChange, adminToken }: {
     if (!trimmed) return;
     setLoadingUrl(true);
     try {
-      const cloudUrl = await uploadUrlToCloudinary(trimmed, 'vibelogos/logos', adminToken);
-      onChange(cloudUrl);
+      const driveUrl = await uploadUrlToGDrive(trimmed, 'logos', adminToken);
+      onChange(driveUrl);
       setExternalUrl('');
     } catch (e: unknown) {
       alert('Load dari URL gagal: ' + (e instanceof Error ? e.message : String(e)));
@@ -276,7 +279,7 @@ function LogoUploadZone({ value, onChange, adminToken }: {
 
       {value && (
         <div style={{ position: 'relative', width: 100, height: 100 }}>
-          <Image src={value} alt="logo" fill sizes="100px" style={{ objectFit: 'contain', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg3)', padding: 8 }} />
+          <Image src={value} alt="logo" fill sizes="100px" style={{ objectFit: 'contain', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg3)', padding: 8 }} unoptimized />
           <button onClick={() => onChange('')} style={{ position: 'absolute', top: -8, right: -8, width: 22, height: 22, borderRadius: '50%', background: '#ff4444', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
         </div>
       )}
@@ -295,13 +298,13 @@ function LogoUploadZone({ value, onChange, adminToken }: {
                 <div style={{ width: '100%', height: 4, background: 'var(--border)', borderRadius: 2 }}>
                   <div style={{ height: '100%', width: `${progress}%`, background: 'var(--accent)', borderRadius: 2, transition: 'width 0.2s' }} />
                 </div>
-                <span style={{ fontSize: 12, color: 'var(--muted)' }}>Uploading {progress}%…</span>
+                <span style={{ fontSize: 12, color: 'var(--muted)' }}>Uploading ke Drive {progress}%…</span>
               </div>
             ) : (
               <>
-                <div style={{ fontSize: 24, marginBottom: 6 }}>🖼️</div>
-                <p style={{ fontSize: 13, color: 'var(--muted)' }}>Drop logo here or <span style={{ color: 'var(--accent)' }}>click to browse</span></p>
-                <p style={{ fontSize: 11, color: '#555', marginTop: 4 }}>PNG, JPG, SVG, WEBP</p>
+                <div style={{ fontSize: 24, marginBottom: 6 }}>📂</div>
+                <p style={{ fontSize: 13, color: 'var(--muted)' }}>Drop logo here atau <span style={{ color: 'var(--accent)' }}>klik untuk browse</span></p>
+                <p style={{ fontSize: 11, color: '#555', marginTop: 4 }}>PNG, JPG, SVG, WEBP → disimpan ke Google Drive</p>
               </>
             )}
           </div>
@@ -337,7 +340,7 @@ function LogoUploadZone({ value, onChange, adminToken }: {
               {loadingUrl ? 'Loading…' : 'Load'}
             </button>
           </div>
-          <p style={{ fontSize: 11, color: '#555', margin: 0 }}>Gambar akan didownload server-side lalu diupload ke Cloudinary (aman dari CORS)</p>
+          <p style={{ fontSize: 11, color: '#555', margin: 0 }}>Gambar akan didownload server-side lalu diupload ke Google Drive kamu</p>
         </div>
       )}
     </div>
@@ -352,7 +355,7 @@ const STEP_MESSAGES = [
   '👕 Scene 1/3 — T-Shirt mockup…',
   '💳 Scene 2/3 — Business Card mockup…',
   '☕ Scene 3/3 — Mug mockup…',
-  '☁️ Uploading ke Cloudinary…',
+  '📂 Uploading ke Google Drive…',
 ];
 
 function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMockupsChange }: {
@@ -366,7 +369,6 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
   const [error, setError] = useState('');
   const stepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Upload manual state
   const [dragging, setDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const uploadInputRef = useRef<HTMLInputElement>(null);
@@ -393,6 +395,7 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
     if (!logoUrl) { alert('Upload logo dulu sebelum generate mockup!'); return; }
     setGenerating(true); setError(''); setResults([]); startStepTimer();
     try {
+      // Generate mockup via API (Gemini), result sudah berupa URL Cloudinary/Drive dari server
       const res = await fetch('/api/generate-mockups', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken },
@@ -408,7 +411,6 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
     } finally { stopStepTimer(); setGenerating(false); setStepIdx(0); }
   };
 
-  // ── Upload Manual: multiple files ──────────────────────────────────────────
   const handleManualFiles = async (files: FileList | File[]) => {
     const arr = Array.from(files).filter(f => f.type.startsWith('image/'));
     if (arr.length === 0) return;
@@ -417,7 +419,10 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
       const key = file.name + Date.now();
       setUploadProgress(prev => ({ ...prev, [key]: 0 }));
       try {
-        const url = await uploadToCloudinary(file, 'vibelogos/mockups', adminToken, (pct) => setUploadProgress(prev => ({ ...prev, [key]: pct })));
+        const url = await uploadToGDrive(
+          file, 'mockups', adminToken,
+          (pct) => setUploadProgress(prev => ({ ...prev, [key]: pct })),
+        );
         const idx = newResults.length;
         newResults.push({ scene: `manual_${idx}`, label: file.name.replace(/\.[^/.]+$/, ''), url });
         setResults([...newResults]);
@@ -461,7 +466,6 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
         <button style={tabBtn('upload')} onClick={() => setActiveTab('upload')}>📁 Upload Manual</button>
       </div>
 
-      {/* Tab: AI Generate */}
       {activeTab === 'ai' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ fontSize: 11, color: '#555' }}>Powered by Gemini 2.0 Flash</div>
@@ -494,7 +498,6 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
         </div>
       )}
 
-      {/* Tab: Upload Manual */}
       {activeTab === 'upload' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div
@@ -507,7 +510,7 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
             {isUploadingManual ? (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
                 <span style={{ display: 'inline-block', width: 24, height: 24, border: '3px solid rgba(200,245,66,0.3)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                <span style={{ fontSize: 13, color: 'var(--muted)' }}>Uploading {Object.keys(uploadProgress).length} file…</span>
+                <span style={{ fontSize: 13, color: 'var(--muted)' }}>Uploading {Object.keys(uploadProgress).length} file ke Drive…</span>
                 <div style={{ width: '100%', maxWidth: 260, display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {Object.entries(uploadProgress).map(([key, pct]) => (
                     <div key={key}>
@@ -521,9 +524,9 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
               </div>
             ) : (
               <>
-                <div style={{ fontSize: 28, marginBottom: 8 }}>🖼️</div>
+                <div style={{ fontSize: 28, marginBottom: 8 }}>📂</div>
                 <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 4 }}>Drop multiple mockup images atau <span style={{ color: 'var(--accent)' }}>klik untuk pilih</span></p>
-                <p style={{ fontSize: 11, color: '#555' }}>PNG, JPG, WEBP · Bisa pilih banyak sekaligus</p>
+                <p style={{ fontSize: 11, color: '#555' }}>PNG, JPG, WEBP · Tersimpan di Google Drive</p>
               </>
             )}
           </div>
@@ -532,7 +535,6 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
         </div>
       )}
 
-      {/* Mockup Grid — shared kedua tab */}
       {results.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -550,7 +552,7 @@ function AIMockupGenerator({ logoUrl, title, category, adminToken, mockups, onMo
                 </div>
                 <button onClick={() => removeResult(i)} style={{ position: 'absolute', top: 6, right: 6, width: 22, height: 22, borderRadius: '50%', background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
                 <div style={{ position: 'absolute', top: 6, left: 6, fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'rgba(0,0,0,0.6)', color: r.scene.startsWith('manual') ? '#aaa' : 'var(--accent)', fontWeight: 600 }}>
-                  {r.scene.startsWith('manual') ? '📁' : '✨ AI'}
+                  {r.scene.startsWith('manual') ? '📂 Drive' : '✨ AI'}
                 </div>
               </div>
             ))}
@@ -597,17 +599,15 @@ export default function AdminPage() {
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000); };
 
-  // ── tokenRef: hanya untuk useCallback/useEffect (bukan JSX props) ─────────
   const tokenRef = useRef(token);
   useEffect(() => { tokenRef.current = token; }, [token]);
 
-  // ── getHeaders pakai tokenRef (aman di dalam callback) ───────────────────
   const getHeaders = useCallback((): Record<string, string> => ({
     'Content-Type': 'application/json',
     'x-admin-token': tokenRef.current,
   }), []);
 
-  // ── fetchLogos pakai tokenRef (aman di dalam callback) ───────────────────
+  // ── fetchLogos: GET /api/logos-data → data tersimpan di Turso ────────────
   const fetchLogos = useCallback(async () => {
     setLoading(true);
     try {
@@ -631,8 +631,8 @@ export default function AdminPage() {
     fetch('/api/logos-data', { headers: { 'x-admin-token': saved } })
       .then(res => {
         if (res.ok) {
-          setToken(saved);          // ← set state (untuk JSX props)
-          tokenRef.current = saved; // ← set ref (untuk callbacks)
+          setToken(saved);
+          tokenRef.current = saved;
           setAuthed(true);
           fetchLogos();
         } else { localStorage.removeItem(STORAGE_KEY); }
@@ -671,7 +671,7 @@ export default function AdminPage() {
     setShowForm(true);
   };
 
-  const handleLogoGroundImport = (data: LogoGroundData & { cloudinary_logo_url?: string }) => {
+  const handleLogoGroundImport = (data: LogoGroundData & { gdrive_logo_url?: string }) => {
     setForm(prev => ({
       ...prev,
       title: data.title || prev.title,
@@ -680,28 +680,37 @@ export default function AdminPage() {
       price: data.price > 0 ? String(data.price) : prev.price,
       main_category: data.main_category || prev.main_category,
       secondary_categories: data.secondary_categories.length > 0 ? data.secondary_categories.join(', ') : prev.secondary_categories,
-      logo_url: data.cloudinary_logo_url || data.logo_url || prev.logo_url,
+      // Pakai gdrive_logo_url jika ada (sudah diupload ke Drive), fallback ke URL asli
+      logo_url: data.gdrive_logo_url || data.logo_url || prev.logo_url,
       logoground_url: data.logoground_url || prev.logoground_url,
     }));
     showToast('✓ Data LogoGround diimport!');
   };
 
+  // ── handleSave: POST/PUT ke /api/logos-data → simpan ke Turso ───────────
   const handleSave = async () => {
     if (!form.title.trim()) return alert('Title wajib diisi!');
     if (!form.logo_url.trim()) return alert('Logo URL wajib diisi!');
     setSaving(true);
     try {
       const payload = {
-        title: form.title.trim(), description: form.description.trim(),
+        title: form.title.trim(),
+        description: form.description.trim(),
         keywords: form.keywords.split(',').map(k => k.trim()).filter(Boolean),
-        price: Number(form.price) || 0, main_category: form.main_category.trim(),
+        price: Number(form.price) || 0,
+        main_category: form.main_category.trim(),
         secondary_categories: form.secondary_categories.split(',').map(s => s.trim()).filter(Boolean),
-        logo_url: form.logo_url.trim(), mockups: form.mockups,
-        logoground_url: form.logoground_url.trim(), account: form.account.trim(),
+        // logo_url = Google Drive viewUrl yang tersimpan di Turso
+        logo_url: form.logo_url.trim(),
+        // mockups = array Drive viewUrl, disimpan sebagai JSON di Turso
+        mockups: form.mockups,
+        logoground_url: form.logoground_url.trim(),
+        account: form.account.trim(),
       };
+
       const res = await fetch(
         editId ? `/api/logos-data/${editId}` : '/api/logos-data',
-        { method: editId ? 'PUT' : 'POST', headers: getHeaders(), body: JSON.stringify(payload) }
+        { method: editId ? 'PUT' : 'POST', headers: getHeaders(), body: JSON.stringify(payload) },
       );
       if (!res.ok) throw new Error(await res.text());
       const saved = await res.json();
@@ -709,13 +718,13 @@ export default function AdminPage() {
       // Optimistic update
       if (editId) {
         setLogos(prev => prev.map(l =>
-          l.id === editId ? { ...l, ...payload, id: editId, slug: l.slug, created_at: l.created_at } : l
+          l.id === editId ? { ...l, ...payload, id: editId, slug: l.slug, created_at: l.created_at } : l,
         ));
       } else if (saved?.logo) {
         setLogos(prev => [saved.logo as Logo, ...prev]);
       }
 
-      showToast(editId ? '✓ Logo diupdate!' : '✓ Logo ditambahkan!');
+      showToast(editId ? '✓ Logo diupdate di Turso!' : '✓ Logo disimpan ke Turso!');
       setShowForm(false);
       setTimeout(() => fetchLogos(), 400);
     } catch (e: unknown) {
@@ -730,7 +739,7 @@ export default function AdminPage() {
     try {
       const res = await fetch(`/api/logos-data/${id}`, { method: 'DELETE', headers: getHeaders() });
       if (res.ok) {
-        showToast('🗑 Logo dihapus');
+        showToast('🗑 Logo dihapus dari Turso');
         setTimeout(() => fetchLogos(), 400);
       } else {
         setLogos(snapshot);
@@ -811,7 +820,7 @@ export default function AdminPage() {
         {!loading && logos.map(logo => (
           <div key={logo.id} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 16, marginBottom: 8, transition: 'border-color 0.2s' }}>
             <div style={{ width: 56, height: 56, borderRadius: 8, background: 'var(--bg3)', flexShrink: 0, position: 'relative', overflow: 'hidden' }}>
-              {logo.logo_url && <Image src={logo.logo_url} alt={logo.title} fill sizes="56px" style={{ objectFit: 'contain', padding: 6 }} />}
+              {logo.logo_url && <Image src={logo.logo_url} alt={logo.title} fill sizes="56px" unoptimized style={{ objectFit: 'contain', padding: 6 }} />}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -819,7 +828,7 @@ export default function AdminPage() {
                 <span className="tag">{logo.main_category}</span>
                 <span style={{ fontSize: 13, color: 'var(--accent)', fontWeight: 600 }}>${logo.price}</span>
                 <span style={{ fontSize: 11, color: '#444', fontFamily: 'monospace' }}>#{logo.id} · {logo.slug}</span>
-                {logo.mockups.length > 0 && <span style={{ fontSize: 11, color: 'var(--muted)' }}>🖼 {logo.mockups.length} mockup</span>}
+                {logo.mockups.length > 0 && <span style={{ fontSize: 11, color: 'var(--muted)' }}>📂 {logo.mockups.length} mockup</span>}
               </div>
               <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{logo.description || <em>No description</em>}</p>
             </div>
@@ -860,7 +869,6 @@ export default function AdminPage() {
 
             <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-              {/* FIX: pakai token (state) bukan tokenRef.current untuk JSX props */}
               <LogoGroundImporter adminToken={token} onImport={handleLogoGroundImport} defaultUrl={form.logoground_url} />
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -901,12 +909,10 @@ export default function AdminPage() {
                 <input type="text" placeholder="modern, minimal, tech (comma-separated)" value={form.keywords} onChange={f('keywords')} style={{ ...inputStyle, marginTop: 6 }} />
               </div>
 
-              {/* FIX: pakai token (state) bukan tokenRef.current untuk JSX props */}
               <LogoUploadZone value={form.logo_url} onChange={url => setForm(p => ({ ...p, logo_url: url }))} adminToken={token} />
 
               <div style={{ borderTop: '1px solid var(--border)', paddingTop: 4 }} />
 
-              {/* FIX: pakai token (state) bukan tokenRef.current untuk JSX props */}
               <AIMockupGenerator
                 logoUrl={form.logo_url} title={form.title} category={form.main_category}
                 adminToken={token}
@@ -927,7 +933,7 @@ export default function AdminPage() {
               <div style={{ display: 'flex', gap: 10, paddingTop: 4 }}>
                 <button onClick={() => setShowForm(false)} style={{ flex: 1, padding: '12px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text)', cursor: 'pointer', fontFamily: 'DM Sans, sans-serif', fontSize: 15 }}>Batal</button>
                 <button onClick={handleSave} disabled={saving} className="btn-primary" style={{ flex: 2, justifyContent: 'center', fontSize: 15, padding: 12, opacity: saving ? 0.7 : 1 }}>
-                  {saving ? 'Menyimpan…' : (editId ? '✓ Update Logo' : '✓ Simpan Logo')}
+                  {saving ? 'Menyimpan ke Turso…' : (editId ? '✓ Update Logo' : '✓ Simpan ke Turso')}
                 </button>
               </div>
             </div>
