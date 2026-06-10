@@ -2,7 +2,7 @@
 // GET semua logos, POST tambah logo baru
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@libsql/client/web';
+import { createClient } from '@libsql/client';
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? '';
 
@@ -71,7 +71,6 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const db = getDb();
 
-    // Generate unique slug
     let slug = slugify(body.title || 'logo');
     const existing = await db.execute({ sql: 'SELECT id FROM logos WHERE slug = ?', args: [slug] });
     if (existing.rows.length > 0) slug = `${slug}-${Date.now()}`;
