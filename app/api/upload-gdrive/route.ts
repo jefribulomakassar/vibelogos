@@ -1,14 +1,9 @@
 // app/api/upload-gdrive/route.ts
-// Upload file atau external URL ke Google Drive (Service Account)
-
 import { NextRequest, NextResponse } from 'next/server';
-import { uploadBufferToDrive, uploadUrlToDrive } from '@/lib/gdrive';
+import { uploadToDrive, uploadUrlToDrive } from '@/lib/google-drive';
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN!;
 
-// Folder IDs dari env
-// GDRIVE_FOLDER_LOGOS   = ID folder Drive khusus logos
-// GDRIVE_FOLDER_MOCKUPS = ID folder Drive khusus mockups
 function getFolderId(folder: 'logos' | 'mockups'): string {
   const id =
     folder === 'logos'
@@ -19,7 +14,6 @@ function getFolderId(folder: 'logos' | 'mockups'): string {
 }
 
 export async function POST(req: NextRequest) {
-  // Auth check
   const adminToken = req.headers.get('x-admin-token');
   if (adminToken !== ADMIN_TOKEN) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -33,7 +27,6 @@ export async function POST(req: NextRequest) {
       const formData = await req.formData();
       const file = formData.get('file') as File | null;
       const folderKey = (formData.get('folder') as string) || 'logos';
-
       if (!file) return NextResponse.json({ error: 'File tidak ditemukan' }, { status: 400 });
 
       const folderId = getFolderId(folderKey as 'logos' | 'mockups');
@@ -41,8 +34,7 @@ export async function POST(req: NextRequest) {
       const ext = file.name.split('.').pop() || 'png';
       const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
 
-      const { fileId, viewUrl } = await uploadBufferToDrive(buffer, filename, file.type, folderId);
-
+      const { fileId, url: viewUrl } = await uploadToDrive(buffer, filename, file.type, folderId);
       return NextResponse.json({ fileId, viewUrl, secure_url: viewUrl });
     }
 
@@ -61,9 +53,9 @@ export async function POST(req: NextRequest) {
     const ext = external_url.split('.').pop()?.split('?')[0] || 'png';
     const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
 
-    const { fileId, viewUrl } = await uploadUrlToDrive(external_url, filename, folderId);
-
+    const { fileId, url: viewUrl } = await uploadUrlToDrive(external_url, filename, folderId);
     return NextResponse.json({ fileId, viewUrl, secure_url: viewUrl });
+
   } catch (err: unknown) {
     console.error('[upload-gdrive]', err);
     return NextResponse.json(
