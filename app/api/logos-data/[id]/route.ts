@@ -37,14 +37,15 @@ function parseRow(row: Record<string, unknown>) {
 // ── PUT /api/logos-data/[id] ──────────────────────────────────────────────────
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const token = req.headers.get('x-admin-token') ?? '';
   if (!token || token !== ADMIN_TOKEN) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const id = Number(params.id);
+  const { id: rawId } = await params;
+  const id = Number(rawId);
   if (isNaN(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
 
   try {
@@ -90,20 +91,20 @@ export async function PUT(
 // ── DELETE /api/logos-data/[id] ───────────────────────────────────────────────
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const token = req.headers.get('x-admin-token') ?? '';
   if (!token || token !== ADMIN_TOKEN) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const id = Number(params.id);
+  const { id: rawId } = await params;
+  const id = Number(rawId);
   if (isNaN(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
 
   try {
     const db = getDb();
 
-    // Ambil data dulu untuk dapat fileId
     const existing = await db.execute({ sql: 'SELECT * FROM logos WHERE id = ?', args: [id] });
     if (existing.rows.length === 0) {
       return NextResponse.json({ error: 'Logo tidak ditemukan' }, { status: 404 });
@@ -111,25 +112,18 @@ export async function DELETE(
 
     const logo = parseRow(existing.rows[0] as Record<string, unknown>);
 
-    // Hapus dari DB dulu
     await db.execute({ sql: 'DELETE FROM logos WHERE id = ?', args: [id] });
 
-    // Hapus file Drive (best-effort, tidak block response)
     const cleanupPromises: Promise<void>[] = [];
-
     if (logo.logo_file_id) {
       cleanupPromises.push(deleteFromDrive(logo.logo_file_id).catch(console.error));
     }
-
-    // Hapus semua mockup files
     const mockups = logo.mockups as Array<{ fileId?: string }>;
     for (const m of mockups) {
       if (m.fileId) {
         cleanupPromises.push(deleteFromDrive(m.fileId).catch(console.error));
       }
     }
-
-    // Fire and forget
     Promise.all(cleanupPromises).catch(console.error);
 
     return NextResponse.json({ success: true });
