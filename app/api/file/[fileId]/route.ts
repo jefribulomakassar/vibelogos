@@ -9,9 +9,9 @@ const CACHE_CONTROL = 'public, max-age=3600, s-maxage=86400, stale-while-revalid
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: Promise<{ fileId: string }> }
+  { params }: { params: { fileId: string } }
 ) {
-  const { fileId } = await params;
+  const { fileId } = params;
   if (!fileId) return NextResponse.json({ error: 'fileId required' }, { status: 400 });
 
   try {
