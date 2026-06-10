@@ -2,7 +2,7 @@
 // GET semua logos, POST tambah logo baru
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@libsql/client';
+import { createClient } from '@libsql/client/web';
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? '';
 
