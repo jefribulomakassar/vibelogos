@@ -1,16 +1,22 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Vercel max function duration (seconds) — butuh karena generate 6 mockup bisa 45–60 detik
-  // Free plan Vercel max 60s, Pro plan max 300s
-  serverExternalPackages: [],
-
+  serverExternalPackages: ['@libsql/client'],
   images: {
     remotePatterns: [
       {
         protocol: 'https',
         hostname: 'res.cloudinary.com',
         pathname: '/doxxsrxcb/**',
+      },
+      // Google Drive proxy (untuk logo & mockup)
+      {
+        protocol: 'https',
+        hostname: 'drive.google.com',
+      },
+      {
+        protocol: 'https',
+        hostname: 'lh3.googleusercontent.com',
       },
     ],
   },
